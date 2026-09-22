@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>図表検索</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="mast">
+    <h1>図表検索</h1>
+    <p class="lede">土壌汚染対策法ガイドラインの図表を探せます。図は Notion で開きます。</p>
+  </header>
+
+  <main>
+    <section class="search-panel" aria-label="検索">
+      <div class="mode" role="group" aria-label="検索方法">
+        <button type="button" data-mode="normal" class="is-on" aria-pressed="true">通常検索</button>
+        <button type="button" data-mode="ai" aria-pressed="false">AI検索</button>
+      </div>
+      <label class="search-label" for="q">知りたい内容</label>
+      <div class="search-row">
+        <input id="q" type="search" placeholder="例: 調査を省略したときの評価" autocomplete="off" enterkeyhint="search">
+        <button id="search" type="button">検索</button>
+        <button id="clear" type="button" hidden>クリア</button>
+      </div>
+      <div id="ai-key" hidden>
+        <label class="key-label" for="apikey">Gemini APIキー</label>
+        <input id="apikey" type="password" autocomplete="off" placeholder="このブラウザにだけ保存されます">
+        <p class="hint"><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">APIキーを作成</a></p>
+      </div>
+      <div class="examples" id="examples"></div>
+
+      <div class="filters">
+        <div class="kind" role="group" aria-label="種類">
+          <button type="button" data-kind="" class="is-on" aria-pressed="true">すべて</button>
+          <button type="button" data-kind="図" aria-pressed="false">図</button>
+          <button type="button" data-kind="表" aria-pressed="false">表</button>
+        </div>
+        <label class="chapter-label">
+          章
+          <select id="chapter">
+            <option value="">すべての章</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <p id="status" class="status" role="status">読み込み中</p>
+    <div id="results"></div>
+  </main>
+
+  <footer>
+    <p>索引は Notion「エンジニアリングシート」の写しです。</p>
+  </footer>
+  <script src="app.js"></script>
+</body>
+</html>

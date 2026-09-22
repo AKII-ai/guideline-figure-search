@@ -1,0 +1,8 @@
+data/bodies/
+data/meta.json
+data/urls.txt
+data/missing.txt
+_test_ui.py
+.env
+ガイドライン*.md
+__pycache__/
