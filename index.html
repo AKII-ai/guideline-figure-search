@@ -25,9 +25,27 @@
         <button id="clear" type="button" hidden>クリア</button>
       </div>
       <div id="ai-key" hidden>
-        <label class="key-label" for="apikey">Gemini APIキー</label>
-        <input id="apikey" type="password" autocomplete="off" placeholder="このブラウザにだけ保存されます">
-        <p class="hint"><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">APIキーを作成</a></p>
+        <div id="ai-setup">
+          <label class="key-label" for="apikey">Gemini APIキー</label>
+          <div class="key-row">
+            <input id="apikey" type="password" autocomplete="off" placeholder="このブラウザにだけ保存されます">
+            <button id="ai-check" type="button">接続確認</button>
+          </div>
+          <p class="hint"><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">APIキーを作成</a></p>
+          <p id="ai-key-status" class="hint" role="status"></p>
+        </div>
+        <div id="ai-connected" hidden>
+          <p class="connected-line">Gemini に接続しています。<button id="ai-disconnect" type="button">解除</button></p>
+          <div id="notion-setup">
+            <label class="key-label" for="notion-token">Notionトークン（図表の画像）</label>
+            <div class="key-row">
+              <input id="notion-token" type="password" autocomplete="off" placeholder="このブラウザにだけ保存されます">
+              <button id="notion-save" type="button">保存</button>
+            </div>
+            <p class="hint"><a href="https://www.notion.so/my-integrations" target="_blank" rel="noopener">インテグレーションを作成</a>し、エンジニアリングシートに接続してください。</p>
+          </div>
+          <p id="notion-on" class="connected-line" hidden>図表の画像を読みます。<button type="button" id="notion-clear">画像を解除</button></p>
+        </div>
       </div>
       <div class="examples" id="examples"></div>
 
@@ -53,6 +71,10 @@
   <footer>
     <p>索引は Notion「エンジニアリングシート」の写しです。</p>
   </footer>
+  <dialog id="preview">
+    <button type="button" id="preview-close">閉じる</button>
+    <img id="preview-img" alt="">
+  </dialog>
   <script src="app.js"></script>
 </body>
 </html>

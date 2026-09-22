@@ -20,8 +20,15 @@ const statusEl = document.getElementById("status");
 const resultsEl = document.getElementById("results");
 const examplesEl = document.getElementById("examples");
 const aiKeyBox = document.getElementById("ai-key");
+const aiSetup = document.getElementById("ai-setup");
+const aiConnected = document.getElementById("ai-connected");
+const aiCheckBtn = document.getElementById("ai-check");
+const aiDisconnectBtn = document.getElementById("ai-disconnect");
+const aiKeyStatus = document.getElementById("ai-key-status");
 const modeBar = document.querySelector(".mode");
+const publicAi = "https://guideline-figure-search.kogama089.workers.dev";
 const localAi = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+const aiOn = localAi || Boolean(publicAi);
 
 examplesEl.innerHTML = EXAMPLES.map(
   (text) => `<button type="button" data-example="${escapeHtml(text)}">${escapeHtml(text)}</button>`
@@ -29,17 +36,57 @@ examplesEl.innerHTML = EXAMPLES.map(
 
 if (localAi) {
   state.mode = localStorage.getItem("searchMode") === "ai" ? "ai" : "normal";
-  apiKeyInput.value = localStorage.getItem("geminiApiKey") || "";
-  apiKeyInput.addEventListener("change", () => {
-    localStorage.setItem("geminiApiKey", apiKeyInput.value.trim());
-  });
+  if (storedKey()) {
+    showConnected(true);
+  } else {
+    apiKeyInput.value = localStorage.getItem("geminiApiKey") || "";
+    showConnected(false);
+  }
 } else {
-  state.mode = "normal";
   localStorage.removeItem("geminiApiKey");
-  localStorage.removeItem("searchMode");
-  modeBar.hidden = true;
+  localStorage.removeItem("geminiConnected");
+  localStorage.removeItem("notionToken");
+  if (publicAi) {
+    state.mode = localStorage.getItem("searchMode") === "ai" ? "ai" : "normal";
+  } else {
+    state.mode = "normal";
+    localStorage.removeItem("searchMode");
+    modeBar.hidden = true;
+  }
 }
 applyMode();
+applyNotion();
+
+document.getElementById("notion-save").addEventListener("click", () => {
+  if (!localAi) return;
+  const token = document.getElementById("notion-token").value.trim();
+  if (!token) return;
+  localStorage.setItem("notionToken", token);
+  document.getElementById("notion-token").value = "";
+  applyNotion();
+  loadThumbs();
+});
+document.getElementById("notion-clear").addEventListener("click", () => {
+  localStorage.removeItem("notionToken");
+  revokePreviews();
+  applyNotion();
+  render();
+});
+document.getElementById("preview-close").addEventListener("click", () => {
+  document.getElementById("preview").close();
+});
+document.getElementById("preview").addEventListener("click", (event) => {
+  if (event.target.id === "preview") event.currentTarget.close();
+});
+
+aiCheckBtn.addEventListener("click", () => checkConnection());
+aiDisconnectBtn.addEventListener("click", () => disconnectKey());
+apiKeyInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    checkConnection();
+  }
+});
 
 examplesEl.addEventListener("click", (event) => {
   const button = event.target.closest("[data-example]");
@@ -64,7 +111,7 @@ searchBtn.addEventListener("click", () => search());
 
 modeBar.addEventListener("click", (event) => {
   const button = event.target.closest("[data-mode]");
-  if (!localAi || !button || button.dataset.mode === state.mode) return;
+  if (!aiOn || !button || button.dataset.mode === state.mode) return;
   state.mode = button.dataset.mode;
   localStorage.setItem("searchMode", state.mode);
   applyMode();
@@ -99,6 +146,16 @@ chapterSelect.addEventListener("change", () => {
 });
 
 resultsEl.addEventListener("click", async (event) => {
+  const thumb = event.target.closest("[data-preview]");
+  if (thumb) {
+    const image = thumb.querySelector("img");
+    if (!image?.src) return;
+    const previewImg = document.getElementById("preview-img");
+    previewImg.src = image.src;
+    previewImg.alt = image.alt;
+    document.getElementById("preview").showModal();
+    return;
+  }
   const button = event.target.closest("[data-copy]");
   if (!button) return;
   const text = button.dataset.copy;
@@ -175,59 +232,56 @@ async function search() {
   }
   const seq = ++searchSeq;
   if (state.controller) state.controller.abort();
-  const local = localHits(query);
-  state.hits = local;
-  if (state.mode !== "ai" || !localAi) {
+  if (state.mode !== "ai" || !aiOn) {
+    state.hits = localHits(query);
     state.loading = false;
     state.error = "";
     render();
     return;
   }
-  const apiKey = apiKeyInput.value.trim();
-  localStorage.setItem("geminiApiKey", apiKey);
-  if (!apiKey) {
+  const apiKey = localAi ? storedKey() : "";
+  if (localAi && !apiKey) {
+    state.hits = null;
     state.loading = false;
-    state.error = state.hits.length ? "" : "Gemini APIキーを入力してください。";
+    state.error = "接続確認をしてから検索してください。";
     render();
     return;
   }
-  if (!local.length) {
-    state.loading = false;
-    render();
-    return;
-  }
+  state.hits = null;
   state.loading = true;
   render();
   const controller = new AbortController();
   state.controller = controller;
+  const payload = {
+    query,
+    kind: state.kind,
+    chapter: state.chapter,
+  };
+  if (localAi) payload.apiKey = apiKey;
   try {
-    const response = await fetch("/api/search", {
+    const response = await fetch(localAi ? "/api/search" : publicAi, {
       method: "POST",
       signal: controller.signal,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        query,
-        kind: state.kind,
-        chapter: state.chapter,
-        apiKey,
-        ids: local.slice(0, 20).map((row) => pageId(row.url)),
-      }),
+      body: JSON.stringify(payload),
     });
     const data = await response.json();
     if (seq !== searchSeq) return;
     if (!response.ok) throw new Error(data.error || "検索に失敗しました。");
     const byId = new Map(state.rows.map((row) => [pageId(row.url), row]));
+    const byNumber = new Map(state.rows.map((row) => [compact(row.number), row]));
     const refined = (data.matches || [])
       .map((match) => {
-        const row = byId.get(match.id);
+        const row = byId.get(match.id) || byNumber.get(compact(match.id));
         return row ? { ...row, reason: match.reason || "" } : null;
       })
       .filter(Boolean);
-    if (refined.length) state.hits = refined;
+    state.hits = refined;
   } catch (error) {
     if (error.name === "AbortError" || seq !== searchSeq) return;
-    state.error = state.hits.length
-      ? "Gemini にはつなげませんでした。通常の検索結果を表示しています。"
+    state.hits = null;
+    state.error = error.message === "Failed to fetch"
+      ? "Gemini に接続できませんでした。"
       : (error.message || "検索に失敗しました。");
   } finally {
     if (seq === searchSeq) {
@@ -245,6 +299,11 @@ function render() {
     resultsEl.innerHTML = "";
     return;
   }
+  if (state.mode === "ai" && state.loading) {
+    statusEl.textContent = `「${state.query.trim()}」 ガイドラインの章立てから探しています。`;
+    resultsEl.innerHTML = "";
+    return;
+  }
   if (state.error && !state.hits) {
     statusEl.textContent = state.error;
     resultsEl.innerHTML = "";
@@ -256,15 +315,17 @@ function render() {
     return;
   }
   const matched = state.hits.filter(passesFilter);
-  const waiting = state.mode === "ai" && state.loading ? " Gemini で確認しています。" : "";
-  const note = state.error && state.hits.length && !state.loading ? ` ${state.error}` : "";
-  statusEl.textContent = `「${state.query.trim()}」 ${matched.length}件${waiting}${note}`;
+  const note = state.error && state.hits.length ? ` ${state.error}` : "";
+  statusEl.textContent = `「${state.query.trim()}」 ${matched.length}件${note}`;
 
   if (matched.length === 0) {
+    const detail = state.mode === "ai"
+      ? "ガイドラインの構成からは、合う図表を選べませんでした。"
+      : "言い方を変えるか、章の指定を外してみてください。";
     resultsEl.innerHTML = `
       <div class="empty">
         <h2>見つかりませんでした</h2>
-        <p>言い方を変えるか、章の指定を外してみてください。</p>
+        <p>${detail}</p>
       </div>`;
     return;
   }
@@ -280,7 +341,7 @@ function render() {
           : snippet
             ? `<span class="snippet">${highlight(snippet, tokens)}</span>`
             : ""
-      }</td>
+      }${thumbFor(row)}</td>
       <td>${highlight(row.chapter || "—", tokens)}</td>
       <td>${highlight(row.section || "—", tokens)}</td>
       <td>${highlight(row.item || row.itemNo || "—", tokens)}</td>
@@ -299,11 +360,121 @@ function render() {
     </tr></thead>
     <tbody>${body}</tbody>
   </table></div>`;
+  loadThumbs();
+}
+
+function thumbFor(row) {
+  if (state.mode !== "ai" || !notionToken()) return "";
+  const id = pageId(row.url);
+  const label = row.number || "図表";
+  return `<button type="button" class="thumb" data-preview="${escapeHtml(id)}"><img alt="${escapeHtml(label)}"></button>`;
+}
+
+let previewUrls = [];
+
+function notionToken() {
+  if (!localAi) return "";
+  return localStorage.getItem("notionToken") || "";
+}
+
+function applyNotion() {
+  const on = Boolean(notionToken());
+  document.getElementById("notion-setup").hidden = on;
+  document.getElementById("notion-on").hidden = !on;
+}
+
+function revokePreviews() {
+  for (const url of previewUrls) URL.revokeObjectURL(url);
+  previewUrls = [];
+  const preview = document.getElementById("preview");
+  if (preview?.open) preview.close();
+}
+
+async function loadThumbs() {
+  const token = notionToken();
+  revokePreviews();
+  if (!token || state.mode !== "ai") return;
+  const buttons = [...resultsEl.querySelectorAll("[data-preview]")];
+  let imageError = "";
+  await Promise.all(buttons.map(async (button) => {
+    try {
+      const response = await fetch(`/api/figure?id=${encodeURIComponent(button.dataset.preview)}`, {
+        headers: { "X-Notion-Token": token },
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        imageError = data.error || "画像を読めませんでした。";
+        throw new Error(imageError);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      previewUrls.push(url);
+      const image = button.querySelector("img");
+      if (image) image.src = url;
+    } catch {
+      button.remove();
+    }
+  }));
+  if (imageError && !resultsEl.querySelector(".thumb img[src]")) {
+    statusEl.textContent = `${statusEl.textContent} ${imageError}`;
+  }
+}
+
+function storedKey() {
+  if (localStorage.getItem("geminiConnected") !== "1") return "";
+  return localStorage.getItem("geminiApiKey") || "";
+}
+
+function showConnected(connected) {
+  aiSetup.hidden = connected;
+  aiConnected.hidden = !connected;
+  if (connected) aiKeyStatus.textContent = "";
+}
+
+function disconnectKey() {
+  localStorage.removeItem("geminiApiKey");
+  localStorage.removeItem("geminiConnected");
+  apiKeyInput.value = "";
+  aiKeyStatus.textContent = "";
+  showConnected(false);
+  cancelSearch();
+  apiKeyInput.focus();
+}
+
+async function checkConnection() {
+  if (!localAi) return;
+  const apiKey = apiKeyInput.value.trim();
+  if (!apiKey) {
+    aiKeyStatus.textContent = "APIキーを入力してください。";
+    return;
+  }
+  aiCheckBtn.disabled = true;
+  aiKeyStatus.textContent = "接続を確認しています。";
+  try {
+    const response = await fetch("/api/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "接続できませんでした。");
+    localStorage.setItem("geminiApiKey", apiKey);
+    localStorage.setItem("geminiConnected", "1");
+    apiKeyInput.value = "";
+    showConnected(true);
+  } catch (error) {
+    localStorage.removeItem("geminiConnected");
+    aiKeyStatus.textContent = error.message === "Failed to fetch"
+      ? "Gemini に接続できませんでした。"
+      : (error.message || "接続できませんでした。");
+  } finally {
+    aiCheckBtn.disabled = false;
+  }
 }
 
 function applyMode() {
   const ai = state.mode === "ai";
-  aiKeyBox.hidden = !ai;
+  aiKeyBox.hidden = !ai || !localAi;
   for (const button of document.querySelectorAll("[data-mode]")) {
     const on = button.dataset.mode === state.mode;
     button.classList.toggle("is-on", on);
