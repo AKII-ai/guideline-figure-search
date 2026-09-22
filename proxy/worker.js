@@ -1,4 +1,5 @@
-// Cloudflare Workers に置く中継。Gemini のキーは秘密 GEMINI_API_KEY にだけ入れる。
+// Cloudflare Workers に置く中継。
+// Gemini のキーは秘密 GEMINI_API_KEY、Notion のトークンは秘密 NOTION_TOKEN にだけ入れる。
 // このファイルと GitHub にはキーを書かない。
 
 const FIGURES_URL = "https://akii-ai.github.io/guideline-figure-search/data/figures.json";
@@ -11,18 +12,28 @@ const ALLOWED = new Set([
 
 let figuresCache = null;
 let figuresAt = 0;
+const imageCache = new Map();
 
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("Origin") || "";
+    const url = new URL(request.url);
     if (request.method === "OPTIONS") {
       return withCors(new Response(null, { status: 204 }), origin);
     }
-    if (request.method !== "POST") {
-      return withCors(json({ error: "検索は POST で送ってください。" }, 405), origin);
-    }
     if (!ALLOWED.has(origin)) {
       return withCors(json({ error: "このサイトからは検索できません。" }, 403), origin);
+    }
+    if (request.method === "GET" && url.pathname === "/figure") {
+      try {
+        return withCors(await figureImage(url, env), origin);
+      } catch (error) {
+        const status = error.status || 502;
+        return withCors(json({ error: error.message || "Notionから画像を読めませんでした。" }, status), origin);
+      }
+    }
+    if (request.method !== "POST") {
+      return withCors(json({ error: "検索は POST で送ってください。" }, 405), origin);
     }
     const apiKey = String(env.GEMINI_API_KEY || "").trim();
     if (!apiKey) {
@@ -56,6 +67,110 @@ export default {
     }
   },
 };
+
+async function figureImage(url, env) {
+  const token = cleanToken(env.NOTION_TOKEN || "");
+  if (!token) {
+    return json({ error: "中継に Notion のトークンがまだ入っていません。" }, 500);
+  }
+  const figureId = String(url.searchParams.get("id") || "").replace(/-/g, "").toLowerCase();
+  if (!/^[0-9a-f]{32}$/.test(figureId)) {
+    return json({ error: "画像の取得先が分かりません。" }, 404);
+  }
+  const figures = await loadFigures(env.FIGURES_URL || FIGURES_URL);
+  const known = new Set(figures.map((row) => pageId(row.url).replace(/-/g, "").toLowerCase()));
+  if (!known.has(figureId)) {
+    return json({ error: "この図表の画像は公開していません。" }, 404);
+  }
+  const cached = imageCache.get(figureId);
+  if (cached && cached.until > Date.now()) {
+    return imageResponse(cached.type, cached.bytes);
+  }
+  const source = await notionImageUrl(figureId, token);
+  if (!source) {
+    return json({ error: "このページに画像がありません。" }, 404);
+  }
+  if (!allowedImageUrl(source)) {
+    return json({ error: "この画像の置き場所は読めません。" }, 404);
+  }
+  const response = await fetch(source, { redirect: "manual", headers: { "User-Agent": "figure-search" } });
+  if (!response.ok) {
+    return json({ error: "Notionから画像を読めませんでした。" }, 502);
+  }
+  const type = (response.headers.get("Content-Type") || "image/jpeg").split(";")[0];
+  if (!type.startsWith("image/")) {
+    return json({ error: "Notionから画像を読めませんでした。" }, 502);
+  }
+  const bytes = await response.arrayBuffer();
+  if (bytes.byteLength > 12_000_000) {
+    return json({ error: "画像が大きすぎます。" }, 502);
+  }
+  imageCache.set(figureId, { until: Date.now() + 240_000, type, bytes });
+  if (imageCache.size > 24) {
+    const oldest = imageCache.keys().next().value;
+    imageCache.delete(oldest);
+  }
+  return imageResponse(type, bytes);
+}
+
+async function notionImageUrl(pageId, token) {
+  const response = await fetch(
+    `https://api.notion.com/v1/blocks/${hyphenate(pageId)}/children?page_size=20`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Notion-Version": "2022-06-28",
+      },
+    }
+  );
+  if (!response.ok) {
+    const message = {
+      401: "Notionトークンが違います。内部インテグレーションのトークンを入れ直してください。",
+      403: "「コンテンツを読み取る」をオンにして、エンジニアリングシートにこの接続を追加してください。",
+      404: "エンジニアリングシートを開き、右上の…から「接続」で、この内部接続を追加してください。",
+    }[response.status] || "Notionから画像を読めませんでした。";
+    throw Object.assign(new Error(message), { status: response.status >= 500 ? 502 : response.status });
+  }
+  const payload = await response.json();
+  for (const block of payload.results || []) {
+    if (block.type !== "image") continue;
+    const image = block.image || {};
+    const found = image[image.type]?.url;
+    if (found) return found;
+  }
+  return "";
+}
+
+function imageResponse(type, bytes) {
+  return new Response(bytes, {
+    headers: {
+      "Content-Type": type,
+      "Cache-Control": "private, max-age=120",
+    },
+  });
+}
+
+function allowedImageUrl(raw) {
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "https:") return false;
+  const host = parsed.hostname;
+  return host.endsWith(".amazonaws.com") || host.endsWith(".notion-static.com") || host.endsWith(".notion.so");
+}
+
+function hyphenate(pageId) {
+  return `${pageId.slice(0, 8)}-${pageId.slice(8, 12)}-${pageId.slice(12, 16)}-${pageId.slice(16, 20)}-${pageId.slice(20)}`;
+}
+
+function cleanToken(token) {
+  let value = String(token || "").trim().replace(/^['"]|['"]$/g, "");
+  if (value.toLowerCase().startsWith("bearer ")) value = value.slice(7).trim();
+  return value;
+}
 
 async function loadFigures(url) {
   if (figuresCache && Date.now() - figuresAt < 10 * 60 * 1000) return figuresCache;
@@ -255,7 +370,7 @@ function withCors(response, origin) {
   if (ALLOWED.has(origin)) {
     headers.set("Access-Control-Allow-Origin", origin);
     headers.set("Vary", "Origin");
-    headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+    headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     headers.set("Access-Control-Allow-Headers", "Content-Type");
     headers.set("Access-Control-Max-Age", "86400");
   }

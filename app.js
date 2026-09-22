@@ -364,10 +364,15 @@ function render() {
 }
 
 function thumbFor(row) {
-  if (state.mode !== "ai" || !notionToken()) return "";
+  if (state.mode !== "ai" || !canShowThumbs()) return "";
   const id = pageId(row.url);
   const label = row.number || "図表";
   return `<button type="button" class="thumb" data-preview="${escapeHtml(id)}"><img alt="${escapeHtml(label)}"></button>`;
+}
+
+function canShowThumbs() {
+  if (localAi) return Boolean(notionToken());
+  return Boolean(publicAi);
 }
 
 let previewUrls = [];
@@ -393,13 +398,14 @@ function revokePreviews() {
 async function loadThumbs() {
   const token = notionToken();
   revokePreviews();
-  if (!token || state.mode !== "ai") return;
+  if (state.mode !== "ai" || !canShowThumbs()) return;
   const buttons = [...resultsEl.querySelectorAll("[data-preview]")];
   let imageError = "";
   await Promise.all(buttons.map(async (button) => {
     try {
-      const response = await fetch(`/api/figure?id=${encodeURIComponent(button.dataset.preview)}`, {
-        headers: { "X-Notion-Token": token },
+      const id = encodeURIComponent(button.dataset.preview);
+      const response = await fetch(token ? `/api/figure?id=${id}` : `${publicAi}/figure?id=${id}`, {
+        headers: token ? { "X-Notion-Token": token } : {},
       });
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
