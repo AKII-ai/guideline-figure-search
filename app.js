@@ -20,18 +20,26 @@ const statusEl = document.getElementById("status");
 const resultsEl = document.getElementById("results");
 const examplesEl = document.getElementById("examples");
 const aiKeyBox = document.getElementById("ai-key");
+const modeBar = document.querySelector(".mode");
+const localAi = location.hostname === "localhost" || location.hostname === "127.0.0.1";
 
 examplesEl.innerHTML = EXAMPLES.map(
   (text) => `<button type="button" data-example="${escapeHtml(text)}">${escapeHtml(text)}</button>`
 ).join("");
 
-state.mode = localStorage.getItem("searchMode") === "ai" ? "ai" : "normal";
+if (localAi) {
+  state.mode = localStorage.getItem("searchMode") === "ai" ? "ai" : "normal";
+  apiKeyInput.value = localStorage.getItem("geminiApiKey") || "";
+  apiKeyInput.addEventListener("change", () => {
+    localStorage.setItem("geminiApiKey", apiKeyInput.value.trim());
+  });
+} else {
+  state.mode = "normal";
+  localStorage.removeItem("geminiApiKey");
+  localStorage.removeItem("searchMode");
+  modeBar.hidden = true;
+}
 applyMode();
-
-apiKeyInput.value = localStorage.getItem("geminiApiKey") || "";
-apiKeyInput.addEventListener("change", () => {
-  localStorage.setItem("geminiApiKey", apiKeyInput.value.trim());
-});
 
 examplesEl.addEventListener("click", (event) => {
   const button = event.target.closest("[data-example]");
@@ -54,9 +62,9 @@ qInput.addEventListener("keydown", (event) => {
 
 searchBtn.addEventListener("click", () => search());
 
-document.querySelector(".mode").addEventListener("click", (event) => {
+modeBar.addEventListener("click", (event) => {
   const button = event.target.closest("[data-mode]");
-  if (!button || button.dataset.mode === state.mode) return;
+  if (!localAi || !button || button.dataset.mode === state.mode) return;
   state.mode = button.dataset.mode;
   localStorage.setItem("searchMode", state.mode);
   applyMode();
@@ -169,7 +177,7 @@ async function search() {
   if (state.controller) state.controller.abort();
   const local = localHits(query);
   state.hits = local;
-  if (state.mode !== "ai") {
+  if (state.mode !== "ai" || !localAi) {
     state.loading = false;
     state.error = "";
     render();

@@ -44,6 +44,7 @@ main { padding-bottom: 32px; }
 .search-panel { margin-top: 16px; }
 
 .mode { display: flex; gap: 6px; margin-bottom: 12px; }
+.mode[hidden] { display: none; }
 
 .mode button.is-on {
   background: #222;
