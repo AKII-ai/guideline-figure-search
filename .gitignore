@@ -6,3 +6,7 @@ _test_ui.py
 .env
 ガイドライン*.md
 __pycache__/
+ガイドライン*.pdf
+data/build/
+data/vectors.i8
+data/vectors.json

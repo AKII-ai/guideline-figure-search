@@ -54,6 +54,16 @@ export default {
     }
     try {
       const figures = await loadFigures(env.FIGURES_URL || FIGURES_URL);
+      if (Array.isArray(payload.passages)) {
+        // RAG：本文の検索はブラウザ（rag.js）が済ませている。ここでは Gemini に1回だけ選ばせる
+        const { passages, rows } = cleanRequest(payload.passages, payload.candidates, figures);
+        if (!rows.length) {
+          return withCors(json({ matches: [] }), origin);
+        }
+        const { text, usage } = await callGemini(buildPrompt(query, passages, rows), MATCH_SCHEMA, apiKey, 1024);
+        return withCors(json({ matches: pickRagMatches(text, rows, passages), usage }), origin);
+      }
+      // 以前の方式（図表の目次全体を渡す）。古い画面と比較のために残す
       const { listed, allowed } = figureMap(figures, payload.kind, payload.chapter);
       if (!listed) {
         return withCors(json({ matches: [] }), origin);
@@ -239,9 +249,21 @@ async function askGemini(query, listed, apiKey) {
       required: ["matches"],
     },
   };
+  const { text } = await callGemini(prompt, generationConfig.responseSchema, apiKey, generationConfig.maxOutputTokens);
+  return text;
+}
+
+// Gemini を1回呼ぶ。{ text, usage } を返す
+async function callGemini(prompt, schema, apiKey, maxTokens) {
   const body = JSON.stringify({
     contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig,
+    generationConfig: {
+      temperature: 0.2,
+      maxOutputTokens: maxTokens,
+      thinkingConfig: { thinkingBudget: 0 },
+      responseMimeType: "application/json",
+      responseSchema: schema,
+    },
   });
   let lastStatus = 502;
   let lastDetail = "";
@@ -261,7 +283,8 @@ async function askGemini(query, listed, apiKey) {
     if (response.ok) {
       const data = await response.json();
       const text = visibleText(data);
-      if (text) return text;
+      const meta = data.usageMetadata || {};
+      if (text) return { text, usage: { prompt: meta.promptTokenCount, output: meta.candidatesTokenCount, model } };
       lastReason = data.candidates?.[0]?.finishReason || data.promptFeedback?.blockReason || "empty";
       continue;
     }
@@ -276,6 +299,106 @@ async function askGemini(query, listed, apiKey) {
   throw Object.assign(new Error(messageFromGoogle(lastDetail, apiKey) || "Gemini のモデルを使えませんでした。"), {
     status: clientStatus(lastStatus),
   });
+}
+
+// ---------- RAG（tools/rag.py の clean_request / build_prompt と同じ） ----------
+const PROMPT_CHUNKS = 6;
+const CANDIDATES = 20;
+const CHUNK_ID = /^c\d{4}$/;
+
+const MATCH_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    matches: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: { id: { type: "STRING" }, chunk: { type: "STRING" }, reason: { type: "STRING" } },
+        required: ["id", "reason"],
+      },
+    },
+  },
+  required: ["matches"],
+};
+
+// ブラウザから来た抜粋と候補を確かめる。数と長さを制限し、図表名は手元の一覧から引き直す
+function cleanRequest(rawPassages, rawCandidates, figures) {
+  const byId = new Map(figures.map((row) => [pageId(row.url), row]));
+  const passages = [];
+  for (const item of (rawPassages || []).slice(0, PROMPT_CHUNKS)) {
+    if (!item || !CHUNK_ID.test(String(item.id || ""))) continue;
+    passages.push({
+      id: String(item.id),
+      no: String(item.no || "").slice(0, 20),
+      title: String(item.title || "").slice(0, 80),
+      page: String(item.page || "").slice(0, 24),
+      quote: String(item.quote || "").slice(0, 300),
+    });
+  }
+  const rows = [];
+  for (const item of (Array.isArray(rawCandidates) ? rawCandidates : []).slice(0, CANDIDATES)) {
+    const id = String((item && item.id) || "");
+    const row = byId.get(id);
+    if (!row || rows.some((r) => r.id === id)) continue;
+    const chunk = String(item.chunk || "");
+    rows.push({
+      id,
+      number: row.number || "",
+      name: String(row.name || "").slice(0, 70),
+      chunk: CHUNK_ID.test(chunk) ? chunk : "",
+    });
+  }
+  return { passages, rows };
+}
+
+function buildPrompt(query, passages, rows) {
+  const lines = passages.map((p) => `[${p.id}] ${p.no} ${p.title} ${p.page ? `p.${p.page}` : ""}\n${p.quote}`);
+  const figures = rows.map((r) => `${r.id}\t${r.number}\t${r.name}\t${r.chunk}`);
+  return (
+    "土壌汚染対策法ガイドラインの実務者の質問に、図表を選んで答えます。\n" +
+    "本文の抜粋（[チャンクid] 項番号 見出し ページ）と、図表の候補（id, 番号, 図表名, 関係するチャンクid）を渡します。\n" +
+    "抜粋の内容から、質問に一番役立つ図表を選んでください。言葉が似ているだけの図表は下にしてください。\n" +
+    "id は候補の先頭列をそのまま返す。候補にない id は返さない。最大5件。\n" +
+    "chunk は根拠にしたチャンクid。reason は日本語で1文（どの項の、どんな図表か）。\n\n" +
+    `質問: ${query}\n\n` +
+    "本文の抜粋:\n" +
+    lines.join("\n\n") +
+    "\n\n" +
+    "図表の候補:\n" +
+    figures.join("\n")
+  );
+}
+
+function pickRagMatches(text, rows, passages) {
+  let parsed;
+  try {
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    parsed = JSON.parse(start >= 0 && end > start ? text.slice(start, end + 1) : text);
+  } catch {
+    throw Object.assign(new Error("Gemini の応答を読み取れませんでした。（format）"), { status: 502 });
+  }
+  const chunkOf = new Map(rows.map((r) => [r.id, r.chunk]));
+  const byNumber = new Map(rows.map((r) => [baseNumber(r.number), r.id]));
+  const known = new Set([...passages.map((p) => p.id), ...chunkOf.values()]);
+  const matches = [];
+  for (const item of parsed.matches || []) {
+    const raw = String(item.id || "").trim();
+    const id = chunkOf.has(raw) ? raw : byNumber.get(baseNumber(raw));
+    if (!id || matches.some((m) => m.id === id)) continue;
+    const chunk = String(item.chunk || "");
+    matches.push({
+      id,
+      reason: String(item.reason || "").trim(),
+      chunk: known.has(chunk) ? chunk : chunkOf.get(id) || "",
+    });
+    if (matches.length >= 5) break;
+  }
+  return matches;
+}
+
+function baseNumber(value) {
+  return normNum(value).replace(/[（(][^）)]*[）)]$/, "");
 }
 
 function visibleText(data) {

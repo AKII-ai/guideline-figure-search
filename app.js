@@ -9,6 +9,7 @@ const state = {
   error: "",
   loading: false,
   mode: "normal",
+  passages: null,
 };
 
 const qInput = document.getElementById("q");
@@ -115,6 +116,7 @@ modeBar.addEventListener("click", (event) => {
   state.mode = button.dataset.mode;
   localStorage.setItem("searchMode", state.mode);
   applyMode();
+  if (state.mode === "ai" && state.rows.length) ensureGuide().catch(() => {});
   cancelSearch();
   render();
 });
@@ -123,6 +125,7 @@ clearBtn.addEventListener("click", () => {
   qInput.value = "";
   state.query = "";
   state.hits = null;
+  state.passages = null;
   state.error = "";
   render();
   qInput.focus();
@@ -187,6 +190,7 @@ async function load() {
     state.rows = await response.json();
     fillChapters(state.rows);
     render();
+    if (state.mode === "ai") ensureGuide().catch(() => {});
   } catch (error) {
     statusEl.textContent = "索引データを読み込めませんでした。";
     resultsEl.innerHTML = `<div class="empty"><p>${escapeHtml(String(error.message || error))}</p></div>`;
@@ -248,14 +252,34 @@ async function search() {
     return;
   }
   state.hits = null;
+  state.passages = null;
   state.loading = true;
   render();
   const controller = new AbortController();
   state.controller = controller;
+  // 1) 本文の検索はブラウザで行う（rag.js）。該当箇所はすぐ表示する
+  let guide;
+  let req;
+  try {
+    guide = await ensureGuide();
+    if (seq !== searchSeq) return;
+    req = guide.request(query, state.kind, state.chapter);
+    state.passages = req.hits.slice(0, 3).map(([, chunk]) => guide.passage(chunk, query));
+    render();
+  } catch (error) {
+    if (seq !== searchSeq) return;
+    state.loading = false;
+    state.error = "ガイドライン本文のデータを読み込めませんでした。";
+    render();
+    return;
+  }
+  // 2) 中継には「質問＋本文の抜粋＋候補の図表 id」だけを送り、Gemini に選ばせる
   const payload = {
     query,
     kind: state.kind,
     chapter: state.chapter,
+    passages: req.passages,
+    candidates: req.candidates,
   };
   if (localAi) payload.apiKey = apiKey;
   try {
@@ -269,26 +293,75 @@ async function search() {
     if (seq !== searchSeq) return;
     if (!response.ok) throw new Error(data.error || "検索に失敗しました。");
     const byId = new Map(state.rows.map((row) => [pageId(row.url), row]));
-    const byNumber = new Map(state.rows.map((row) => [compact(row.number), row]));
-    const refined = (data.matches || [])
+    state.hits = (data.matches || [])
       .map((match) => {
-        const row = byId.get(match.id) || byNumber.get(compact(match.id));
-        return row ? { ...row, reason: match.reason || "" } : null;
+        const row = byId.get(match.id);
+        const chunk = guide.chunkById.get(match.chunk);
+        return row ? { ...row, reason: match.reason || "", basis: chunk ? guide.passage(chunk, query) : null } : null;
       })
       .filter(Boolean);
-    state.hits = refined;
   } catch (error) {
     if (error.name === "AbortError" || seq !== searchSeq) return;
-    state.hits = null;
-    state.error = error.message === "Failed to fetch"
-      ? "Gemini に接続できませんでした。"
-      : (error.message || "検索に失敗しました。");
+    // Gemini が使えないときは、本文検索だけの順位を出す
+    state.hits = req.ranked.slice(0, 8).map(([row, , chunk]) => ({
+      ...row,
+      reason: "",
+      basis: chunk ? guide.passage(chunk, query) : null,
+    }));
+    const message = error.message === "Failed to fetch" ? "Gemini に接続できませんでした。" : (error.message || "検索に失敗しました。");
+    state.error = `${message} 本文検索だけの結果を表示しています。`;
   } finally {
     if (seq === searchSeq) {
       state.loading = false;
       render();
     }
   }
+}
+
+let guidePromise = null;
+
+// ガイドライン本文（data/chunks.json）を読み、検索の索引を作る。最初の1回だけ
+function ensureGuide() {
+  if (!guidePromise) {
+    guidePromise = (async () => {
+      const [chunks, synonyms] = await Promise.all([
+        fetch("data/chunks.json").then((response) => {
+          if (!response.ok) throw new Error(String(response.status));
+          return response.json();
+        }),
+        fetch("data/synonyms.json").then((response) => (response.ok ? response.json() : {})),
+      ]);
+      const guide = new GuideRag.Guideline(chunks, state.rows, synonyms);
+      guide.chunkById = new Map(chunks.map((chunk) => [chunk.id, chunk]));
+      return guide;
+    })().catch((error) => {
+      guidePromise = null;
+      throw error;
+    });
+  }
+  return guidePromise;
+}
+
+function pageLabel(passage) {
+  if (passage.page && /^\d+$/.test(String(passage.page))) return `p.${passage.page}`;
+  if (passage.page) return String(passage.page);
+  return `PDF ${passage.pdf}ページ目`;
+}
+
+function whereLabel(passage) {
+  const number = passage.no && !passage.no.startsWith("A") ? `${passage.no} ` : "";
+  return `${number}${passage.path.slice(-2).join(" › ")}（${pageLabel(passage)}）`;
+}
+
+function passagesHtml(tokens) {
+  if (state.mode !== "ai" || !state.passages || !state.passages.length) return "";
+  const items = state.passages
+    .map(
+      (passage) => `<li><span class="passage-where">${escapeHtml(whereLabel(passage))}</span>` +
+        `<span class="passage-quote">${highlight(`${passage.quote}…`, tokens)}</span></li>`
+    )
+    .join("");
+  return `<section class="passages" aria-label="本文の該当箇所"><h2>本文の該当箇所</h2><ol>${items}</ol></section>`;
 }
 
 function render() {
@@ -300,8 +373,10 @@ function render() {
     return;
   }
   if (state.mode === "ai" && state.loading) {
-    statusEl.textContent = `「${state.query.trim()}」 ガイドラインの章立てから探しています。`;
-    resultsEl.innerHTML = "";
+    statusEl.textContent = state.passages
+      ? `「${state.query.trim()}」 本文の該当箇所から、図表を選んでいます。`
+      : `「${state.query.trim()}」 ガイドライン本文から探しています。`;
+    resultsEl.innerHTML = passagesHtml(tokens);
     return;
   }
   if (state.error && !state.hits) {
@@ -322,7 +397,7 @@ function render() {
     const detail = state.mode === "ai"
       ? "ガイドラインの構成からは、合う図表を選べませんでした。"
       : "言い方を変えるか、章の指定を外してみてください。";
-    resultsEl.innerHTML = `
+    resultsEl.innerHTML = `${passagesHtml(tokens)}
       <div class="empty">
         <h2>見つかりませんでした</h2>
         <p>${detail}</p>
@@ -338,10 +413,10 @@ function render() {
       <td><span class="name">${highlight(row.name || "（名称なし）", tokens)}</span>${
         row.reason
           ? `<span class="snippet">${escapeHtml(row.reason)}</span>`
-          : snippet
+          : snippet && !row.basis
             ? `<span class="snippet">${highlight(snippet, tokens)}</span>`
             : ""
-      }${thumbFor(row)}</td>
+      }${row.basis ? `<span class="basis">根拠：${escapeHtml(whereLabel(row.basis))}</span>` : ""}${thumbFor(row)}</td>
       <td>${highlight(row.chapter || "—", tokens)}</td>
       <td>${highlight(row.section || "—", tokens)}</td>
       <td>${highlight(row.item || row.itemNo || "—", tokens)}</td>
@@ -353,7 +428,7 @@ function render() {
     </tr>`;
   }).join("");
 
-  resultsEl.innerHTML = `<div class="table-wrap"><table>
+  resultsEl.innerHTML = `${passagesHtml(tokens)}<div class="table-wrap"><table>
     <caption class="visually-hidden">検索結果</caption>
     <thead><tr>
       <th>図表番号</th><th>図表名</th><th>章</th><th>節</th><th>項</th><th>ページ</th><th>操作</th>

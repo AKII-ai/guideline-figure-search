@@ -1,4 +1,4 @@
-"""図表検索のローカルサーバ。静的ファイルと Gemini 検索を出す。"""
+"""図表検索のローカルサーバ。静的ファイルと、ガイドライン本文を使った AI 検索（RAG）を出す。"""
 
 import json
 import re
@@ -10,9 +10,11 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from tools.rag import GeminiError, Guideline, call_gemini, message_from_google
+
 ROOT = Path(__file__).resolve().parent
 FIGURES = json.loads((ROOT / "data" / "figures.json").read_text(encoding="utf-8"))
-MODELS = ("gemini-2.5-flash", "gemini-flash-latest")
+GUIDE = Guideline(ROOT)
 HOST = "127.0.0.1"
 PORT = 8765
 NOTION_VERSION = "2022-06-28"
@@ -35,66 +37,6 @@ for row in FIGURES:
 
 def page_id(url):
     return url.rstrip("/").split("/")[-1]
-
-
-def focus(text, query, limit=520):
-    compact = " ".join((text or "").split())
-    if not compact:
-        return ""
-    at = -1
-    for token in re.split(r"\s+", query or ""):
-        if not token:
-            continue
-        found = compact.find(token)
-        if found >= 0 and (at < 0 or found < at):
-            at = found
-    if at < 0:
-        return compact[:limit]
-    start = max(0, at - 90)
-    return compact[start:start + limit]
-
-
-def catalog(kind, chapter, ids=None, query=""):
-    wanted = {item for item in (ids or []) if item}
-    lines = []
-    for row in FIGURES:
-        item_id = page_id(row["url"])
-        if wanted and item_id not in wanted:
-            continue
-        if kind and row.get("kind") != kind:
-            continue
-        chapter_name = row.get("chapter") or ""
-        if chapter == "__none__":
-            if chapter_name:
-                continue
-        elif chapter and chapter_name != chapter:
-            continue
-        mention = focus(row.get("context") or "", query) if wanted else ""
-        description = " ".join((row.get("description") or "").split())
-        if wanted and description and description not in mention:
-            mention = f"{mention} {description[:180]}".strip()
-        lines.append(
-            "\t".join(
-                [
-                    page_id(row["url"]),
-                    row.get("kind") or "",
-                    row.get("number") or "",
-                    str(row.get("page") or ""),
-                    chapter_name,
-                    row.get("section") or "",
-                    row.get("item") or "",
-                    row.get("name") or "",
-                    mention,
-                ]
-            )
-        )
-    return "\n".join(lines)
-
-
-def redact(text, api_key):
-    if api_key and api_key in text:
-        return text.replace(api_key, "***")
-    return text
 
 
 class NotionImageError(Exception):
@@ -220,10 +162,11 @@ def figure_map(kind, chapter):
     return "\n".join(lines), allowed
 
 
-def ask_gemini(query, kind, chapter, api_key):
+def legacy_prompt(query, kind, chapter):
+    """以前の方式：図表の目次全体を Gemini に渡す。比較（評価）のために残している。"""
     listed, allowed = figure_map(kind, chapter)
     if not listed:
-        return []
+        return "", allowed
     prompt = (
         "これは土壌汚染対策法ガイドラインの図表の目次です。\n"
         "列は id, 図表番号, 章, 節, 項, 図表名, 説明。タブ区切り。\n"
@@ -235,64 +178,31 @@ def ask_gemini(query, kind, chapter, api_key):
         f"質問: {query}\n\n"
         f"目次:\n{listed}"
     )
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.2,
-            "maxOutputTokens": 768,
-            "thinkingConfig": {"thinkingBudget": 0},
-            "responseMimeType": "application/json",
-            "responseSchema": {
-                "type": "OBJECT",
-                "properties": {
-                    "matches": {
-                        "type": "ARRAY",
-                        "items": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "id": {"type": "STRING"},
-                                "reason": {"type": "STRING"},
-                            },
-                            "required": ["id", "reason"],
-                        },
-                    }
-                },
-                "required": ["matches"],
-            },
-        },
-    }
-    body = json.dumps(payload).encode("utf-8")
-    last_error = None
-    for model in MODELS:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-        request = Request(
-            url,
-            data=body,
-            headers={
-                "Content-Type": "application/json",
-                "x-goog-api-key": api_key,
-            },
-            method="POST",
-        )
-        try:
-            with urlopen(request, timeout=45) as response:
-                raw = response.read().decode("utf-8")
-            break
-        except HTTPError as error:
-            detail = error.read().decode("utf-8", errors="replace")
-            last_error = (error.code, detail)
-            if error.code == 404:
-                continue
-            raise GeminiError(message_from_google(detail, api_key), error.code) from error
-        except URLError as error:
-            raise GeminiError("Gemini に接続できませんでした。", 502) from error
-    else:
-        code, detail = last_error or (502, "")
-        raise GeminiError(message_from_google(detail, api_key) or "Gemini のモデルを使えませんでした。", code)
+    return prompt, allowed
 
-    data = json.loads(raw)
-    text = data["candidates"][0]["content"]["parts"][0]["text"]
-    parsed = json.loads(text)
+
+LEGACY_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "matches": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {"id": {"type": "STRING"}, "reason": {"type": "STRING"}},
+                "required": ["id", "reason"],
+            },
+        }
+    },
+    "required": ["matches"],
+}
+
+
+def legacy_search(query, kind, chapter, api_key):
+    prompt, allowed = legacy_prompt(query, kind, chapter)
+    if not prompt:
+        return {"matches": [], "usage": None}
+    # 公開中の中継（proxy/worker.js の以前の方式）と同じ上限。768 では理由文が途中で切れる
+    parsed, usage = call_gemini(prompt, LEGACY_SCHEMA, api_key, max_tokens=4096)
     matches = []
     seen = set()
     for item in parsed.get("matches") or []:
@@ -303,28 +213,7 @@ def ask_gemini(query, kind, chapter, api_key):
         matches.append({"id": item_id, "reason": str(item.get("reason") or "").strip()})
         if len(matches) >= 8:
             break
-    return matches
-
-
-def message_from_google(detail, api_key):
-    detail = redact(detail, api_key)
-    try:
-        message = json.loads(detail)["error"]["message"]
-    except (json.JSONDecodeError, KeyError, TypeError):
-        message = detail.strip()[:300]
-    message = redact(message, api_key)
-    lowered = message.lower()
-    if "api key" in lowered or "api_key" in lowered:
-        return "Gemini APIキーが正しくありません。"
-    if "quota" in lowered or "rate" in lowered:
-        return "Gemini の利用上限に達しました。少し待ってからもう一度検索してください。"
-    return message or "Gemini の検索に失敗しました。"
-
-
-class GeminiError(Exception):
-    def __init__(self, message, status):
-        super().__init__(message)
-        self.status = status
+    return {"matches": matches, "usage": usage}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -378,20 +267,23 @@ class Handler(BaseHTTPRequestHandler):
         if not api_key:
             self.send_json(400, {"error": "Gemini APIキーを入力してください。"})
             return
+        kind = str(payload.get("kind") or "")
+        chapter = str(payload.get("chapter") or "")
         try:
-            matches = ask_gemini(
-                query,
-                str(payload.get("kind") or ""),
-                str(payload.get("chapter") or ""),
-                api_key,
-            )
+            if isinstance(payload.get("passages"), list):
+                # ブラウザ（rag.js）が本文を探し済み。公開サイトの中継（proxy/worker.js）と同じ受け方
+                result = GUIDE.answer(query, payload["passages"], payload.get("candidates"), api_key)
+            elif payload.get("mode") == "legacy":
+                result = legacy_search(query, kind, chapter, api_key)
+            else:
+                result = GUIDE.search(query, kind, chapter, api_key)
         except GeminiError as error:
             self.send_json(error.status if 400 <= error.status < 600 else 502, {"error": str(error)})
             return
         except (KeyError, IndexError, json.JSONDecodeError):
             self.send_json(502, {"error": "Gemini の応答を読み取れませんでした。"})
             return
-        self.send_json(200, {"matches": matches})
+        self.send_json(200, result)
 
     def figure_image(self):
         query = self.path.split("?", 1)[1] if "?" in self.path else ""
