@@ -3,6 +3,8 @@
   keyword: 昨年の Notion キーワード検索に相当（図表一覧に言葉が入っているかだけ。app.js の通常検索。tools/keyword_search.py）。
            質問文をそのまま入れる
   keyword_words : keyword に、質問の keywords（実務者が通常検索に打ち込みそうな単語を空白区切り）を入れる
+  normal_v2 : 新しい通常検索（AI なし。tools/normal_search.py）。単語は完全一致、文章か完全一致0件なら本文 BM25
+  〇〇_words : 〇〇 に keywords を入れる（keyword_words・bm25_words・normal_v2_words）
   legacy : 以前の方式（図表の目次全体を Gemini に渡す）
   bm25   : 本文 BM25 ＋ 言い換え辞書 ＋ 本文→図表のつながり（AI なし）
   rag    : bm25 の上位だけを Gemini に渡して選ばせる
@@ -99,6 +101,7 @@ def run_method(guide, method, question, key):
     started = time.perf_counter()
     usage = None
     passages = None
+    note = None  # normal_v2 で使った検索（記録の「切り替えの理由」と同じ言葉）
     if method in ("hybrid", "rag_hybrid"):
         qvec = query_vector(question, key)
         result = guide.search(question, api_key=key, qvec=qvec, use_llm=method == "rag_hybrid")
@@ -109,6 +112,11 @@ def run_method(guide, method, question, key):
 
         rows = keyword_search(guide.figures, question)
         result = {"matches": [{"id": page_id(r["url"])} for r in rows]}
+    elif method in ("normal_v2", "normal_v2_words"):
+        from tools.normal_search import normal_search
+
+        rows, engine, note, _ = normal_search(guide, question)
+        result = {"matches": [{"id": page_id(r["url"])} for r in rows]}
     elif method == "agent_lite":
         if method not in _agents:
             from tools.agent_lite import AgentLite
@@ -117,7 +125,7 @@ def run_method(guide, method, question, key):
         result = _agents[method].search(question, key)
         usage = result["usage"]
         passages = result["passages"] or None
-    elif method == "bm25":
+    elif method in ("bm25", "bm25_words"):
         result = guide.search(question)
         passages = result["passages"]
     elif method == "rag":
@@ -140,7 +148,7 @@ def run_method(guide, method, question, key):
     else:
         raise ValueError(method)
     elapsed = time.perf_counter() - started
-    return numbers(guide, [m["id"] for m in result["matches"]]), usage, elapsed, passages
+    return numbers(guide, [m["id"] for m in result["matches"]]), usage, elapsed, passages, note
 
 
 def main():
@@ -154,7 +162,8 @@ def main():
     args = parser.parse_args()
     methods = args.methods.split(",") if args.methods else (["legacy", "bm25", "rag"] if args.all else ["bm25"])
     key = api_key()
-    if any(m not in ("bm25", "keyword", "keyword_words") for m in methods) and not key:
+    no_ai = ("bm25", "bm25_words", "keyword", "keyword_words", "normal_v2", "normal_v2_words")
+    if any(m not in no_ai for m in methods) and not key:
         sys.exit("GEMINI_API_KEY がありません。環境変数か .env に入れてください。")
 
     guide = Guideline(ROOT)
@@ -169,16 +178,18 @@ def main():
         hits, rr, tokens, times, errors, places, calls, statuses = [], [], [], [], 0, [], [], {}
         for item in questions:
             question = item["q"]
-            if method == "keyword_words":
+            if method.endswith("_words"):
                 if not item.get("keywords"):
                     print(f"[{method}] keywords がないので質問文のまま探す: {question}")
                 question = item.get("keywords") or question
             try:
-                got, usage, elapsed, passages = run_method(guide, method, question, key)
+                got, usage, elapsed, passages, note = run_method(guide, method, question, key)
             except GeminiError as error:
                 print(f"[{method}] error: {error}")
                 errors += 1
-                got, usage, elapsed, passages = [], None, 0.0, None
+                got, usage, elapsed, passages, note = [], None, 0.0, None, None
+            if note:
+                statuses[note] = statuses.get(note, 0) + 1
             place = item_hit(item["items"], passages) if passages is not None and item.get("items") else None
             if place is not None:
                 places.append(place)
@@ -234,7 +245,10 @@ def main():
         summary = {**{m: old["summary"][m] for m in kept}, **summary}
         detail = [row for row in old["detail"] if row["method"] in kept] + detail
         print(f"前回の結果から残した方式: {', '.join(kept) or 'なし'}")
-    order = ["keyword", "keyword_words", "legacy", "bm25", "hybrid", "rag", "rag_hybrid", "agent", "mixed", "agent_lite"]
+    order = [
+        "keyword", "keyword_words", "legacy", "bm25", "bm25_words", "normal_v2", "normal_v2_words",
+        "hybrid", "rag", "rag_hybrid", "agent", "mixed", "agent_lite",
+    ]
     summary = dict(sorted(summary.items(), key=lambda kv: order.index(kv[0]) if kv[0] in order else len(order)))
     detail.sort(key=lambda row: order.index(row["method"]) if row["method"] in order else len(order))
 
@@ -248,6 +262,9 @@ def main():
         "mixed": "混合型（本文検索のヒント＋目次→本文）",
         "keyword": "keyword（文章のまま。昨年の方式、AIなし）",
         "keyword_words": "keyword（単語で入力。昨年の方式、AIなし）",
+        "bm25_words": "本文BM25（単語で入力、AIなし）",
+        "normal_v2": "通常検索・新（文章のまま、AIなし）",
+        "normal_v2_words": "通常検索・新（単語で入力、AIなし）",
         "agent_lite": "軽量エージェント（RAG＋次の一手、Gemini 最大2回）",
     }
     lines = [
@@ -270,9 +287,10 @@ def main():
         )
     for method, row in summary.items():
         if row["statuses"]:
-            order = ["ok", "clarify", "retry", "standards", "number"]
+            order = ["ok", "clarify", "retry", "standards", "number", "図表番号", "単語", "文章のため自動", "0件のため自動"]
             parts = [f"{x} {row['statuses'][x]}" for x in order if x in row["statuses"]]
-            lines += ["", f"{names[method]} の1回目の status の内訳: " + "／".join(parts)]
+            label = "使った検索の内訳" if method.startswith("normal_v2") else "1回目の status の内訳"
+            lines += ["", f"{names[method]} の{label}: " + "／".join(parts)]
     lines += ["", "## 外れた質問", ""]
     for row in detail:
         if row["rank"] is None or row["rank"] > K:
