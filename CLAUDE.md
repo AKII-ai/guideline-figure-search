@@ -11,7 +11,7 @@
 ```
 python tools/extract_pdf.py     # PDF → data/build/lines.jsonl（行・ページ・書体・見出し番号の画像）
 python tools/build_chunks.py    # → data/chunks.json（公開する）
-python tools/check_parity.py    # Python 版と rag.js・proxy/worker.js が同じ結果か（Gemini は呼ばない）
+python tools/check_parity.py    # Python 版と rag.js・app.js・proxy/worker.js が同じ結果か（Gemini は呼ばない）
 python eval/run_eval.py         # 評価（--all で Gemini も。GEMINI_API_KEY が必要）
 ```
 - 章・節・項は PDF の目次ページから組み立てる。各ページ右上の項番号と全ページで一致することを確かめてある。
@@ -41,9 +41,19 @@ python eval/run_eval.py         # 評価（--all で Gemini も。GEMINI_API_KEY
 - retry：「retry_query＋元の質問」でブラウザが探し直し（AI なし）、2回目を呼ぶ。standards：基準値アプリ（https://akii-ai.github.io/standards-web/ ）へのリンクを物質名を添えて出す（検索語は URL で渡せない。e-Gov はこのアプリから呼ばない）。
 - `tools/agent.py`（目次からたどるエージェント）は評価用に残す。手を入れない。
 
+## 通常検索（AI なし。app.js ⇔ tools/normal_search.py、2026-11-20 決定）
+- 図表番号（全角も含む）や、空白で区切った短い単語 → 完全一致（図表一覧に言葉が入っているか。今までの通常検索）。
+- 文章のとき、または完全一致で0件のとき → 本文 BM25（AI 検索の①〜③を AI なしで使う）。上に「本文から探しました」、本文の該当箇所（上位3件）も出す。図表は15件まで。
+- 完全一致の結果の下に「本文からも探す」、本文 BM25 の結果の下に「完全一致に戻す」（0件で自動に切り替えたときは出さない）。
+- 文章かどうか（rag.js の isSentence）：？。、！ のどれかがある、または空白で区切った1語が16字以上か、9字以上でひらがなを含む。
+  評価の50問で、質問文は全部 BM25 側、keywords は全部完全一致側に振り分けられることを確かめてある。
+- `tools/keyword_search.py` は昨年方式の再現として凍結（2026-11-20）。app.js の通常検索とは別物。中身を変えない。
+
 ## 試験評価の記録（アプリ）
-- 検索のたびに必ず記録する（確認は出さない。2026-11-20 利用者の判断）。記録はその端末の localStorage だけに残し、サーバーには送らない。
-- 1件 = 日時・質問・方式・status の流れ・AI の呼び出し回数・入力/出力 token・表示した図表・評価（役立った／違った）。CSV（UTF-8、BOM 付き）で書き出せる。
+- 通常検索も AI 検索も、検索のたびに必ず記録する（確認は出さない。2026-11-20 利用者の判断）。記録はその端末の localStorage だけに残し、サーバーには送らない。CSV（UTF-8、BOM 付き）で書き出し・消去ができる。
+- CSV の列（1回の検索 = 1行）：日時／端末ID（初回に作る乱数）／検索の通し番号（端末ごと）／もとの検索（ボタンでの切り替え・確認の選択肢でやり直したときの元の通し番号）／検索モード（通常・AI）／使った検索（完全一致・本文BM25・AI）／切り替えの理由（図表番号・単語・文章のため自動・0件のため自動・「本文からも探す」ボタン・「完全一致に戻す」ボタン。AI 検索は空欄）／質問／AI の動き（status の流れ）／AI の呼び出し回数／入力 token／出力 token（2回呼んだら合計）／費用の目安（円）／表示した図表番号（上位5件）／Notion で開いた図表番号／評価（役立った・違った・未評価）／最初の結果が出るまでの時間（秒）。
+- 古い形の記録は、足りない列を空欄にして書き出す。
+- `data/pricing.json` … 費用の目安の単価（100万 token あたりの米ドル）と為替。コードに数字を書かない。モデルや単価が変わったらここを直す。
 
 ## 言い換え辞書（data/synonyms.json）
 - 左は実務者の言い方（「12条」「地歴」「VOC」「メッシュ」など）、右はガイドラインの言い方。
@@ -53,7 +63,7 @@ python eval/run_eval.py         # 評価（--all で Gemini も。GEMINI_API_KEY
 - `eval/questions.jsonl` … 1行 = `{"q", "keywords", "expected": [図表番号], "source": "claude" | "user" | "wg"}`。
   `keywords` は実務者が通常検索に打ち込みそうな単語（空白区切り）。質問文から自然に取れる言葉だけにし、正解の図表名に合わせない。`wg` は WG で集める実務者の質問。
 - 命中 = 正解のどれかが上位5件。MRR は最初に当たった順位。
-- 方式：keyword（昨年のキーワード検索。文章のまま）／keyword_words（同じ検索に keywords を入れる）／legacy（以前の方式。目次全体を渡す）／bm25（AI なし）／rag（本文＋Gemini）／agent_lite（rag＋次の一手、最大2回）。agent・mixed は目次からたどる比較用。
+- 方式：keyword（昨年のキーワード検索。文章のまま）／keyword_words（同じ検索に keywords を入れる）／normal_v2・normal_v2_words（新しい通常検索）／bm25_words（bm25 に keywords）／legacy（以前の方式。目次全体を渡す）／bm25（AI なし）／rag（本文＋Gemini）／agent_lite（rag＋次の一手、最大2回）。agent・mixed は目次からたどる比較用。
 - 調整は claude の質問で行い、user の質問は最後の確認用（見ずに調整しない）。
 
 ## キーの置き場所
