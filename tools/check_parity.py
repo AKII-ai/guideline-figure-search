@@ -7,6 +7,7 @@
   - 軽量エージェントのプロンプト（1回目・確認なし・2回目）（agent_lite.py ⇔ worker.js）
   - 探し直しの検索語で探した候補（agent_lite.py ⇔ rag.js）
   - 図表番号の見分け、次の一手の確かめ方（clean_next ⇔ cleanNext）
+  - 通常検索：文章かどうかの見分け（normal_search.py ⇔ rag.js）と、完全一致の並び（normal_search.py ⇔ app.js の localHits）
 """
 
 import json
@@ -18,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from tools.agent_lite import AgentLite, agent_prompt, clean_next, has_figure_number, retry_query  # noqa: E402
+from tools.normal_search import exact_hits, is_sentence  # noqa: E402
 from tools.rag import Guideline, clean_request  # noqa: E402
 
 NODE = r"""
@@ -55,7 +57,27 @@ const out = input.questions.map((q) => {
 });
 const next = input.next.map(([parsed, attempt, allow]) => W.cleanNext(parsed, attempt, allow));
 const numbers = input.numbers.map((q) => rag.hasFigureNumber(q));
-process.stdout.write(JSON.stringify({ out, next, numbers }));
+// app.js の通常検索（完全一致）を取り出して動かす
+const app = fs.readFileSync(path.join(root, "app.js"), "utf8");
+const pick = (name) => {
+  const start = app.indexOf(`function ${name}(`);
+  let depth = 0;
+  let end = app.indexOf("{", start);
+  for (; end < app.length; end++) {
+    if (app[end] === "{") depth++;
+    else if (app[end] === "}" && --depth === 0) break;
+  }
+  return app.slice(start, end + 1);
+};
+const normalBox = { state: { rows: figures, kind: "", chapter: "" } };
+vm.createContext(normalBox);
+vm.runInContext(
+  ["passesFilter", "localHits", "scoreRow", "fieldHits", "haystack", "tokenize", "compact", "normalize"].map(pick).join(";") +
+    ";this.localHits = localHits;",
+  normalBox
+);
+const normal = input.normal.map((q) => ({ sentence: rag.isSentence(q), exact: normalBox.localHits(q).map((r) => r.url) }));
+process.stdout.write(JSON.stringify({ out, next, numbers, normal }));
 """
 
 NEXT_CASES = [
@@ -70,17 +92,20 @@ NEXT_CASES = [
     ({"status": "hack"}, 1, True),
     ({}, 1, True),
 ]
+NORMAL_EXTRA = ["おそれ", "地歴の流れ", "表2.3.1-2", "表２．３．１－２", "自然由来 盛土", "遮水工封じ込めを適用できる汚染って何？", "ｐｃｅ　分解生成物"]
 NUMBERS = ["表2.3.1-2 を見たい", "図5.10.7-2", "図 2.3 - 1", "図2.5.1-1(1)", "表２．３．１－２", "2.3.1項", "表の見方", "12条"]
 
 
 def main():
-    questions = [json.loads(line)["q"] for line in (ROOT / "eval" / "questions.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows = [json.loads(line) for line in (ROOT / "eval" / "questions.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    questions = [row["q"] for row in rows]
+    normal = questions + [row["keywords"] for row in rows if row.get("keywords")] + NORMAL_EXTRA
     questions += ["12条", "ボーリング", "VOC 土壌ガス 代表地点", "ｐｃｅ　分解生成物"]
     guide = Guideline(ROOT)
     agent = AgentLite(guide)
     run = subprocess.run(
         ["node", "-e", NODE, str(ROOT)],
-        input=json.dumps({"questions": questions, "next": NEXT_CASES, "numbers": NUMBERS}, ensure_ascii=False).encode("utf-8"),
+        input=json.dumps({"questions": questions, "next": NEXT_CASES, "numbers": NUMBERS, "normal": normal}, ensure_ascii=False).encode("utf-8"),
         capture_output=True,
     )
     if run.returncode:
@@ -116,8 +141,16 @@ def main():
         if has_figure_number(text) != other:
             bad += 1
             print(f"図表番号の見分けに差あり: {text}")
-    total = len(questions) + len(NEXT_CASES) + len(NUMBERS)
-    print(f"{total} 件中 {total - bad} 件が一致（質問 {len(questions)}・次の一手 {len(NEXT_CASES)}・図表番号 {len(NUMBERS)}）")
+    for text, other in zip(normal, js["normal"]):
+        py = {"sentence": is_sentence(text), "exact": [row["url"] for row in exact_hits(guide.figures, text)]}
+        if py != other:
+            bad += 1
+            print(f"通常検索に差あり: {text}")
+    total = len(questions) + len(NEXT_CASES) + len(NUMBERS) + len(normal)
+    print(
+        f"{total} 件中 {total - bad} 件が一致（質問 {len(questions)}・次の一手 {len(NEXT_CASES)}・"
+        f"図表番号 {len(NUMBERS)}・通常検索 {len(normal)}）"
+    )
     sys.exit(1 if bad else 0)
 
 

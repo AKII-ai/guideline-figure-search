@@ -259,6 +259,22 @@
     return FIGURE_NUMBER.test(nfkc(query));
   }
 
+  // ---------- 通常検索（tools/normal_search.py と同じ決まり） ----------
+  // 文章かどうか：？。、！ があるか、空白で区切った1語が16字以上か、9字以上でひらがなを含むなら文章
+  const SENTENCE_MARK = /[?？。、!！]/;
+  const HIRAGANA = /[ぁ-ゟ]/g;
+
+  function isSentence(query) {
+    const text = nfkc(query).trim();
+    if (!text) return false;
+    if (SENTENCE_MARK.test(text)) return true;
+    return text.split(/\s+/).some((token) => {
+      const length = [...token].length;
+      const hiragana = (token.match(HIRAGANA) || []).length;
+      return length >= 16 || (length >= 9 && hiragana >= 1);
+    });
+  }
+
   // 探し直すときの検索語：言い換えた言葉＋元の質問
   function retryQuery(retry, query) {
     return `${retry} ${query}`;
@@ -272,6 +288,7 @@
     normNum,
     pageId,
     hasFigureNumber,
+    isSentence,
     retryQuery,
     PROMPT_CHUNKS,
     CANDIDATES,
