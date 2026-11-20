@@ -371,7 +371,6 @@ footer {
 
 .clarify-options,
 .feedback,
-.log-buttons,
 .log-tools {
   display: flex;
   flex-wrap: wrap;
@@ -381,7 +380,6 @@ footer {
 
 .clarify-options button,
 .feedback button,
-.log-consent button,
 .log-tools button {
   border: 1px solid #bbb;
   background: #fff;
@@ -403,15 +401,6 @@ footer {
   color: #fff;
   border-color: #222;
 }
-
-.log-consent {
-  margin: 14px 0 0;
-  border: 1px solid var(--line);
-  padding: 10px 14px;
-  font-size: 13px;
-}
-
-.log-consent p { margin: 0 0 8px; }
 
 .log-tools {
   margin-top: 6px;

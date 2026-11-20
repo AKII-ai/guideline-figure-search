@@ -40,7 +40,6 @@ const STANDARDS_URL = "https://akii-ai.github.io/standards-web/";
 let clearArmed = null;
 // 試験評価の記録（この端末の localStorage だけ）
 const LOG_KEY = "searchLog";
-const CONSENT_KEY = "searchLogConsent";
 
 examplesEl.innerHTML = EXAMPLES.map(
   (text) => `<button type="button" data-example="${escapeHtml(text)}">${escapeHtml(text)}</button>`
@@ -121,9 +120,6 @@ qInput.addEventListener("keydown", (event) => {
 
 searchBtn.addEventListener("click", () => search());
 
-document.getElementById("log-yes").addEventListener("click", () => setConsent(true));
-document.getElementById("log-no").addEventListener("click", () => setConsent(false));
-document.getElementById("log-toggle").addEventListener("click", () => setConsent(!logOn()));
 document.getElementById("log-export").addEventListener("click", () => exportLog());
 document.getElementById("log-clear").addEventListener("click", (event) => clearLog(event.currentTarget));
 
@@ -466,10 +462,6 @@ function storageSet(key, value) {
   }
 }
 
-function logOn() {
-  return storageGet(CONSENT_KEY) === "yes";
-}
-
 function readLog() {
   try {
     const list = JSON.parse(storageGet(LOG_KEY) || "[]");
@@ -484,7 +476,6 @@ function shownNumbers(rows) {
 }
 
 function addRecord({ query, mode, flow, calls, prompt = 0, output = 0, shown }) {
-  if (!logOn()) return null;
   const list = readLog();
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   list.push({
@@ -505,7 +496,7 @@ function addRecord({ query, mode, flow, calls, prompt = 0, output = 0, shown }) 
 }
 
 function updateRecord(id, patch) {
-  if (!id || !logOn()) return;
+  if (!id) return;
   const list = readLog();
   const record = list.find((item) => item.id === id);
   if (!record) return;
@@ -556,30 +547,16 @@ function clearLog(button) {
   render();
 }
 
-function setConsent(yes) {
-  storageSet(CONSENT_KEY, yes ? "yes" : "no");
-  if (!yes) state.recordId = null;
-  renderLogTools();
-  render();
-}
-
 function renderLogTools() {
-  const consent = storageGet(CONSENT_KEY);
-  document.getElementById("log-consent").hidden = consent === "yes" || consent === "no";
-  const tools = document.getElementById("log-tools");
-  tools.hidden = consent !== "yes" && consent !== "no";
   const count = readLog().length;
-  document.getElementById("log-count").textContent = consent === "yes"
-    ? `この端末に検索の記録を残しています（${count}件）。外には送りません。`
-    : "検索の記録は残していません。";
+  document.getElementById("log-count").textContent = `検索の記録 ${count}件（この端末だけに保存）`;
   document.getElementById("log-export").hidden = count === 0;
   document.getElementById("log-clear").hidden = count === 0;
   document.getElementById("log-clear").textContent = "記録を消す";
-  document.getElementById("log-toggle").textContent = consent === "yes" ? "記録をやめる" : "記録する";
 }
 
 function feedbackHtml() {
-  if (!logOn() || !state.recordId) return "";
+  if (!state.recordId) return "";
   const record = readLog().find((item) => item.id === state.recordId);
   const chosen = record ? record.feedback : "";
   const button = (label) =>
