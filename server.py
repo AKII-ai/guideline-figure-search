@@ -11,10 +11,12 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from tools.rag import GeminiError, Guideline, call_gemini, message_from_google
+from tools.agent_lite import AgentLite
 
 ROOT = Path(__file__).resolve().parent
 FIGURES = json.loads((ROOT / "data" / "figures.json").read_text(encoding="utf-8"))
 GUIDE = Guideline(ROOT)
+AGENT = AgentLite(GUIDE)
 HOST = "127.0.0.1"
 PORT = 8765
 NOTION_VERSION = "2022-06-28"
@@ -270,7 +272,15 @@ class Handler(BaseHTTPRequestHandler):
         kind = str(payload.get("kind") or "")
         chapter = str(payload.get("chapter") or "")
         try:
-            if isinstance(payload.get("passages"), list):
+            if isinstance(payload.get("passages"), list) and payload.get("attempt") is not None:
+                # 軽量エージェント。proxy/worker.js と同じ受け方（図表選びと次の一手を1回で）
+                attempt = 2 if payload.get("attempt") == 2 else 1
+                allow = attempt == 1 and payload.get("allowClarify") is not False
+                previous = payload.get("previous") if isinstance(payload.get("previous"), list) else []
+                req = {"passages": payload["passages"], "candidates": payload.get("candidates")}
+                found, usage = AGENT.ask(query, req, attempt, api_key, allow, previous[:10])
+                result = {"matches": found.pop("matches"), "next": found, "usage": usage}
+            elif isinstance(payload.get("passages"), list):
                 # ブラウザ（rag.js）が本文を探し済み。公開サイトの中継（proxy/worker.js）と同じ受け方
                 result = GUIDE.answer(query, payload["passages"], payload.get("candidates"), api_key)
             elif payload.get("mode") == "legacy":

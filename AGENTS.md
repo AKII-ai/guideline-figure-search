@@ -11,7 +11,7 @@
 ```
 python tools/extract_pdf.py     # PDF → data/build/lines.jsonl（行・ページ・書体・見出し番号の画像）
 python tools/build_chunks.py    # → data/chunks.json（公開する）
-python tools/check_parity.py    # Python 版と rag.js が同じ結果か
+python tools/check_parity.py    # Python 版と rag.js・proxy/worker.js が同じ結果か（Gemini は呼ばない）
 python eval/run_eval.py         # 評価（--all で Gemini も。GEMINI_API_KEY が必要）
 ```
 - 章・節・項は PDF の目次ページから組み立てる。各ページ右上の項番号と全ページで一致することを確かめてある。
@@ -28,20 +28,33 @@ python eval/run_eval.py         # 評価（--all で Gemini も。GEMINI_API_KEY
 2. 本文チャンクを 2文字区切りの BM25 で探す（見出しは本文の2倍の重み）。
 3. 上位12チャンクが触れている図表・同じ項の図表・図表名に当たる図表を候補にする。
    1つの図表への点数は「一番強いつながり＋残りは 1/4」。
-4. Gemini には「質問＋上位6チャンクの抜粋（各220字）＋候補20件」だけを渡し、1回だけ呼ぶ。
-- アプリが動いているときにエージェントや複数回の呼び出しはしない（遅くなるため）。
+4. Gemini には「質問＋上位6チャンクの抜粋（各220字）＋候補20件」だけを渡す。
+- AI の呼び出しは1つの質問につき最大2回。1回目で図表選びと次の一手（ok／clarify／retry／standards）を同時に答えさせる。目次全体は渡さない。2回目には1回目の結果を図表番号だけで渡す。（2026-11-20 決定。それまでの「エージェントや複数回の呼び出しはしない」を改めた）
 - 本文の検索はブラウザ（rag.js）で行う。Cloudflare Workers の無料枠は1回10ms の計算時間しか使えないため、中継（proxy/worker.js）は抜粋と候補を確かめて Gemini を呼ぶだけにする。
 - 中継は、候補の図表名を手元の figures.json から引き直し、抜粋の数と長さを制限する（任意の文章を Gemini に流させない）。
+- 中継は、2回目は status を ok に固定し、新しい項目の長さを制限する（retry_query 60字、確認の一文 80字、選択肢 3個・各30字、status は4つだけ）。1回目の図表番号は figures.json にある番号だけ通す。
+- ハイブリッド検索（gemini-embedding-001＋RRF）は Python 版の評価だけに置き、公開版には入れない（2026-11-19 決定。効果が小さいため）。`data/vectors.*` は .gitignore 済み。
+
+## 軽量エージェント（tools/agent_lite.py ⇔ app.js・rag.js・proxy/worker.js）
+- 図表番号（表2.3.1-2 など）を含む質問は、AI を呼ばずに通常検索で返す。
+- ok：そのまま表示（1回）。clarify：選択肢と「このまま検索」を出す。選んだ答えを質問に足し、新しい質問としてやり直す（確認は1回まで）。
+- retry：「retry_query＋元の質問」でブラウザが探し直し（AI なし）、2回目を呼ぶ。standards：基準値アプリ（https://akii-ai.github.io/standards-web/ ）へのリンクを物質名を添えて出す（検索語は URL で渡せない。e-Gov はこのアプリから呼ばない）。
+- `tools/agent.py`（目次からたどるエージェント）は評価用に残す。手を入れない。
+
+## 試験評価の記録（アプリ）
+- 初めて使うときに記録するかを選ばせる。記録はその端末の localStorage だけに残し、サーバーには送らない。
+- 1件 = 日時・質問・方式・status の流れ・AI の呼び出し回数・入力/出力 token・表示した図表・評価（役立った／違った）。CSV（UTF-8、BOM 付き）で書き出せる。
 
 ## 言い換え辞書（data/synonyms.json）
 - 左は実務者の言い方（「12条」「地歴」「VOC」「メッシュ」など）、右はガイドラインの言い方。
 - 評価の質問に合わせるためだけの言葉は足さない。誰が書いても同じになる一般的な言い換えに限る。
 
 ## 評価
-- `eval/questions.jsonl` … 1行 = `{"q", "expected": [図表番号], "source": "Codex" | "user"}`。
+- `eval/questions.jsonl` … 1行 = `{"q", "keywords", "expected": [図表番号], "source": "claude" | "user" | "wg"}`。
+  `keywords` は実務者が通常検索に打ち込みそうな単語（空白区切り）。質問文から自然に取れる言葉だけにし、正解の図表名に合わせない。`wg` は WG で集める実務者の質問。
 - 命中 = 正解のどれかが上位5件。MRR は最初に当たった順位。
-- 方式：legacy（以前の方式。目次全体を渡す）／bm25（AI なし）／rag（本文＋Gemini）。
-- 調整は Codex の質問で行い、user の質問は最後の確認用（見ずに調整しない）。
+- 方式：keyword（昨年のキーワード検索。文章のまま）／keyword_words（同じ検索に keywords を入れる）／legacy（以前の方式。目次全体を渡す）／bm25（AI なし）／rag（本文＋Gemini）／agent_lite（rag＋次の一手、最大2回）。agent・mixed は目次からたどる比較用。
+- 調整は claude の質問で行い、user の質問は最後の確認用（見ずに調整しない）。
 
 ## キーの置き場所
 - 公開サイト：Cloudflare Worker の秘密 `GEMINI_API_KEY` と `NOTION_TOKEN`。

@@ -57,11 +57,26 @@ export default {
       if (Array.isArray(payload.passages)) {
         // RAG：本文の検索はブラウザ（rag.js）が済ませている。ここでは Gemini に1回だけ選ばせる
         const { passages, rows } = cleanRequest(payload.passages, payload.candidates, figures);
+        if (payload.attempt != null) {
+          // 軽量エージェント：図表選びと次の一手（ok/clarify/retry/standards）を1回で答えさせる
+          if (!rows.length) {
+            return withCors(json({ matches: [], next: { status: "ok" } }), origin);
+          }
+          const attempt = Number(payload.attempt) === 2 ? 2 : 1;
+          const allowClarify = attempt === 1 && payload.allowClarify !== false;
+          const previous = cleanPrevious(payload.previous, figures);
+          const prompt = buildAgentPrompt(query, passages, rows, attempt, allowClarify, previous.map((p) => p.number));
+          const schema = attempt === 1 ? AGENT_SCHEMA : MATCH_SCHEMA;
+          const { text, usage } = await callGemini(prompt, schema, apiKey, 1024);
+          const parsed = parseJson(text);
+          const matches = pickRagMatches(parsed, rows, passages, previous);
+          return withCors(json({ matches, next: cleanNext(parsed, attempt, allowClarify), usage }), origin);
+        }
         if (!rows.length) {
           return withCors(json({ matches: [] }), origin);
         }
         const { text, usage } = await callGemini(buildPrompt(query, passages, rows), MATCH_SCHEMA, apiKey, 1024);
-        return withCors(json({ matches: pickRagMatches(text, rows, passages), usage }), origin);
+        return withCors(json({ matches: pickRagMatches(parseJson(text), rows, passages), usage }), origin);
       }
       // 以前の方式（図表の目次全体を渡す）。古い画面と比較のために残す
       const { listed, allowed } = figureMap(figures, payload.kind, payload.chapter);
@@ -369,22 +384,30 @@ function buildPrompt(query, passages, rows) {
   );
 }
 
-function pickRagMatches(text, rows, passages) {
-  let parsed;
+function parseJson(text) {
   try {
     const start = text.indexOf("{");
     const end = text.lastIndexOf("}");
-    parsed = JSON.parse(start >= 0 && end > start ? text.slice(start, end + 1) : text);
+    return JSON.parse(start >= 0 && end > start ? text.slice(start, end + 1) : text);
   } catch {
     throw Object.assign(new Error("Gemini の応答を読み取れませんでした。（format）"), { status: 502 });
   }
+}
+
+// previous（2回目に渡す1回目の図表）も選べるようにする。[{ id, number }]
+function pickRagMatches(parsed, rows, passages, previous = []) {
   const chunkOf = new Map(rows.map((r) => [r.id, r.chunk]));
   const byNumber = new Map(rows.map((r) => [baseNumber(r.number), r.id]));
+  const extra = new Set();
+  for (const p of previous) {
+    extra.add(p.id);
+    if (!byNumber.has(baseNumber(p.number))) byNumber.set(baseNumber(p.number), p.id);
+  }
   const known = new Set([...passages.map((p) => p.id), ...chunkOf.values()]);
   const matches = [];
   for (const item of parsed.matches || []) {
     const raw = String(item.id || "").trim();
-    const id = chunkOf.has(raw) ? raw : byNumber.get(baseNumber(raw));
+    const id = chunkOf.has(raw) || extra.has(raw) ? raw : byNumber.get(baseNumber(raw));
     if (!id || matches.some((m) => m.id === id)) continue;
     const chunk = String(item.chunk || "");
     matches.push({
@@ -399,6 +422,104 @@ function pickRagMatches(text, rows, passages) {
 
 function baseNumber(value) {
   return normNum(value).replace(/[（(][^）)]*[）)]$/, "");
+}
+
+// ---------- 軽量エージェント（tools/agent_lite.py と同じ） ----------
+const STATUSES = ["ok", "clarify", "retry", "standards"];
+const RETRY_QUERY_MAX = 60;
+const CLARIFY_MAX = 80;
+const OPTION_MAX = 30;
+const OPTIONS_MAX = 3;
+const PREVIOUS_MAX = 5;
+
+const AGENT_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    status: { type: "STRING", enum: STATUSES },
+    matches: { ...MATCH_SCHEMA.properties.matches, maxItems: 5 },
+    // 入れ子にすると確認の一文が改行の繰り返しで止まらなくなることがあったので、平らにして短く縛る
+    clarify_question: { type: "STRING", description: "確認の一文。80字まで。改行なし" },
+    clarify_options: { type: "ARRAY", items: { type: "STRING" }, maxItems: 3 },
+    retry_query: { type: "STRING", description: "検索語。60字まで" },
+    substance: { type: "STRING", description: "物質名" },
+    medium: { type: "STRING", description: "土壌／地下水など" },
+  },
+  required: ["status", "matches"],
+  propertyOrdering: ["status", "clarify_question", "clarify_options", "retry_query", "substance", "medium", "matches"],
+};
+
+const CLARIFY_RULE =
+  "- clarify: 質問の意味が2通り以上に取れ、それぞれ別の項に行き着くときだけ。" +
+  "clarify_question に確認の一文（80字まで・改行なし）、clarify_options に選択肢2〜3個（各30字まで）\n";
+
+function statusRules(allowClarify) {
+  return (
+    "status は次の一手。迷ったら ok。\n" +
+    "- ok: 候補の中に質問に合う図表がある\n" +
+    (allowClarify ? CLARIFY_RULE : "") +
+    "- retry: 候補が質問に合わず、言い方を変えれば当たりそうなとき。retry_query にガイドラインでの言い方の検索語（60字まで）\n" +
+    "- standards: 数値の基準値そのもの（〇〇の土壌溶出量基準は何 mg/L か等）を聞いているとき。substance に物質名、medium に土壌／地下水などの別\n" +
+    "status が ok 以外でも、候補に役立つ図表があれば matches に入れる。"
+  );
+}
+
+function buildAgentPrompt(query, passages, rows, attempt, allowClarify, previous) {
+  const base = buildPrompt(query, passages, rows);
+  if (attempt >= 2) {
+    // 2回目には1回目の結果を図表番号だけで渡す（抜粋や理由は渡さない）
+    return (
+      base +
+      "\n\n言い換えて探し直した2回目です。1回目に選んだ図表番号: " +
+      (previous.length ? previous.join("、") : "なし") +
+      "\n候補の中から選び直してください。1回目の図表のほうが合うなら、その番号を id に返してもよい。"
+    );
+  }
+  return `${base}\n\n${statusRules(allowClarify)}`;
+}
+
+function clip(value, limit) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
+// 1回目の図表番号は figures.json にある番号だけ通す
+function cleanPrevious(raw, figures) {
+  if (!Array.isArray(raw)) return [];
+  const byNumber = new Map();
+  for (const row of figures) {
+    const key = baseNumber(row.number);
+    if (key && !byNumber.has(key)) byNumber.set(key, row);
+  }
+  const out = [];
+  for (const value of raw.slice(0, 10)) {
+    const row = byNumber.get(baseNumber(clip(value, 30)));
+    if (!row || out.some((p) => p.id === pageId(row.url))) continue;
+    out.push({ id: pageId(row.url), number: row.number });
+    if (out.length >= PREVIOUS_MAX) break;
+  }
+  return out;
+}
+
+// AI が返した次の一手を確かめる。2回目は ok だけ。長さと数を制限する
+function cleanNext(parsed, attempt, allowClarify) {
+  let status = String(parsed.status || "ok");
+  if (!STATUSES.includes(status) || attempt >= 2 || (status === "clarify" && !allowClarify)) status = "ok";
+  if (status === "clarify") {
+    const options = (Array.isArray(parsed.clarify_options) ? parsed.clarify_options : [])
+      .map((o) => clip(o, OPTION_MAX))
+      .filter(Boolean)
+      .slice(0, OPTIONS_MAX);
+    const question = clip(parsed.clarify_question, CLARIFY_MAX);
+    if (question && options.length >= 2) return { status, clarify: { question, options } };
+    return { status: "ok" };
+  }
+  if (status === "retry") {
+    const retry = clip(parsed.retry_query, RETRY_QUERY_MAX);
+    return retry ? { status, retry_query: retry } : { status: "ok" };
+  }
+  if (status === "standards") {
+    return { status, standards: { substance: clip(parsed.substance, 30), medium: clip(parsed.medium, 20) } };
+  }
+  return { status: "ok" };
 }
 
 function visibleText(data) {

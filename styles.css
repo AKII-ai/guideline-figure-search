@@ -350,3 +350,74 @@ footer {
   font-size: 12px;
   color: var(--muted);
 }
+
+/* AI 検索の途中経過（確認・探し直し・基準値の案内） */
+.agent-note {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.agent-box {
+  margin: 0 0 16px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--link);
+  padding: 10px 14px;
+}
+
+.agent-box p { margin: 0 0 6px; }
+.agent-box p:last-child { margin-bottom: 0; }
+.agent-box a { color: var(--link); }
+
+.clarify-options,
+.feedback,
+.log-buttons,
+.log-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.clarify-options button,
+.feedback button,
+.log-consent button,
+.log-tools button {
+  border: 1px solid #bbb;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  padding: 6px 12px;
+}
+
+.clarify-options [data-clarify-skip] { color: var(--muted); }
+
+.feedback {
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+
+.feedback button.is-on {
+  background: #222;
+  color: #fff;
+  border-color: #222;
+}
+
+.log-consent {
+  margin: 14px 0 0;
+  border: 1px solid var(--line);
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+.log-consent p { margin: 0 0 8px; }
+
+.log-tools {
+  margin-top: 6px;
+}
+
+.log-tools button {
+  padding: 3px 10px;
+  font-size: 12px;
+}

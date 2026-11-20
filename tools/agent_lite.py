@@ -16,6 +16,7 @@ RAG の1回目の呼び出しで、図表選びと一緒に「次の一手」（
 
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -27,7 +28,7 @@ from tools.rag import MATCH_SCHEMA, base_number, build_prompt, call_gemini, clea
 STATUSES = ("ok", "clarify", "retry", "standards")
 STANDARDS_URL = "https://akii-ai.github.io/standards-web/"
 # 図表番号（表2.3.1-2、図5.10.7-2、図2.3-1、図2.5.1-1(1) など）
-FIGURE_NUMBER = re.compile(r"[図表]\s*\d+(?:\s*[.．]\s*\d+)+\s*[-－‐―ー−]\s*\d+")
+FIGURE_NUMBER = re.compile(r"[図表]\s*\d+(?:\s*[.．]\s*\d+)+\s*[-－‐―ー−]\s*\d+", re.ASCII)
 RETRY_QUERY_MAX = 60
 CLARIFY_MAX = 80
 OPTION_MAX = 30
@@ -64,7 +65,13 @@ AGENT_SCHEMA = {
 
 
 def has_figure_number(query):
-    return bool(FIGURE_NUMBER.search(query or ""))
+    # 全角の数字も半角にしてから見る（rag.js と同じ）
+    return bool(FIGURE_NUMBER.search(unicodedata.normalize("NFKC", query or "")))
+
+
+def retry_query(retry, query):
+    """探し直すときの検索語：言い換えた言葉＋元の質問。rag.js の retryQuery と同じ。"""
+    return f"{retry} {query}"
 
 
 def clip(value, limit):
@@ -113,18 +120,35 @@ class AgentLite:
         self.guide = guide
         self.by_number = {}
         for row in guide.figures:
-            self.by_number.setdefault(base_number(row.get("number")), page_id(row["url"]))
+            key = base_number(row.get("number"))
+            if key:
+                self.by_number.setdefault(key, row)
+
+    def clean_previous(self, raw):
+        """1回目の図表番号は figures.json にある番号だけ通す。worker.js の cleanPrevious と同じ。[(id, 番号)]"""
+        out = []
+        for value in (raw if isinstance(raw, list) else [])[:10]:
+            row = self.by_number.get(base_number(clip(value, 30)))
+            if not row or any(i == page_id(row["url"]) for i, _ in out):
+                continue
+            out.append((page_id(row["url"]), row["number"]))
+            if len(out) >= 5:
+                break
+        return out
 
     def ask(self, query, req, attempt, api_key, allow_clarify=True, previous=()):
         """Gemini を1回呼ぶ。worker.js が受け取って確かめるのと同じ内容。"""
         passages, rows = clean_request(req["passages"], req["candidates"], self.guide.by_id)
         # 2回目に渡す「1回目の図表番号」は figures.json にある番号だけ
-        previous = [n for n in previous if base_number(n) in self.by_number][:5]
+        previous = self.clean_previous(list(previous or []))
         if not rows:
             return {"matches": [], "status": "ok"}, None
+        attempt = 2 if attempt == 2 else 1
+        allow_clarify = attempt == 1 and allow_clarify
         schema = AGENT_SCHEMA if attempt == 1 else MATCH_SCHEMA
-        parsed, usage = call_gemini(agent_prompt(query, passages, rows, attempt, allow_clarify, previous), schema, api_key)
-        allowed = {r["id"] for r in rows} | {self.by_number[base_number(n)] for n in previous}
+        prompt = agent_prompt(query, passages, rows, attempt, allow_clarify, [n for _, n in previous])
+        parsed, usage = call_gemini(prompt, schema, api_key)
+        allowed = {r["id"] for r in rows} | {i for i, _ in previous}
         chunk_of = {r["id"]: r["chunk"] for r in rows}
         known = {p["id"] for p in passages} | set(chunk_of.values())
         matches = []
@@ -169,7 +193,7 @@ class AgentLite:
         final = first
         if first["status"] == "retry":
             # ブラウザで探し直す（AI なし）。言い換えた言葉と元の質問をあわせて探す
-            retry_req = self.guide.request(f"{first['retry_query']} {query}")
+            retry_req = self.guide.request(retry_query(first["retry_query"], query))
             previous = [self.guide.by_id[m["id"]]["number"] for m in first["matches"]]
             second, usage = self.ask(query, retry_req, 2, api_key, allow_clarify, previous)
             add(usage)

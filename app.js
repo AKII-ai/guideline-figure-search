@@ -10,6 +10,12 @@ const state = {
   loading: false,
   mode: "normal",
   passages: null,
+  clarify: null, // AI が確認を求めたとき { question, options }
+  pending: null, // 確認中に1回目で選んでいた図表（「このまま検索」で出す）
+  retried: "", // 言い換えて探し直した検索語
+  standards: null, // 基準値アプリへの案内 { substance, medium }
+  agentNote: "",
+  recordId: null, // 試験評価の記録（いまの検索）
 };
 
 const qInput = document.getElementById("q");
@@ -30,6 +36,11 @@ const modeBar = document.querySelector(".mode");
 const publicAi = "https://guideline-figure-search.kogama089.workers.dev";
 const localAi = location.hostname === "localhost" || location.hostname === "127.0.0.1";
 const aiOn = localAi || Boolean(publicAi);
+const STANDARDS_URL = "https://akii-ai.github.io/standards-web/";
+let clearArmed = null;
+// 試験評価の記録（この端末の localStorage だけ）
+const LOG_KEY = "searchLog";
+const CONSENT_KEY = "searchLogConsent";
 
 examplesEl.innerHTML = EXAMPLES.map(
   (text) => `<button type="button" data-example="${escapeHtml(text)}">${escapeHtml(text)}</button>`
@@ -110,6 +121,12 @@ qInput.addEventListener("keydown", (event) => {
 
 searchBtn.addEventListener("click", () => search());
 
+document.getElementById("log-yes").addEventListener("click", () => setConsent(true));
+document.getElementById("log-no").addEventListener("click", () => setConsent(false));
+document.getElementById("log-toggle").addEventListener("click", () => setConsent(!logOn()));
+document.getElementById("log-export").addEventListener("click", () => exportLog());
+document.getElementById("log-clear").addEventListener("click", (event) => clearLog(event.currentTarget));
+
 modeBar.addEventListener("click", (event) => {
   const button = event.target.closest("[data-mode]");
   if (!aiOn || !button || button.dataset.mode === state.mode) return;
@@ -118,6 +135,7 @@ modeBar.addEventListener("click", (event) => {
   applyMode();
   if (state.mode === "ai" && state.rows.length) ensureGuide().catch(() => {});
   cancelSearch();
+  resetAgent();
   render();
 });
 
@@ -127,6 +145,7 @@ clearBtn.addEventListener("click", () => {
   state.hits = null;
   state.passages = null;
   state.error = "";
+  resetAgent();
   render();
   qInput.focus();
 });
@@ -149,6 +168,21 @@ chapterSelect.addEventListener("change", () => {
 });
 
 resultsEl.addEventListener("click", async (event) => {
+  const option = event.target.closest("[data-clarify]");
+  if (option) {
+    answerClarify(option.dataset.clarify);
+    return;
+  }
+  if (event.target.closest("[data-clarify-skip]")) {
+    skipClarify();
+    return;
+  }
+  const feedback = event.target.closest("[data-feedback]");
+  if (feedback) {
+    updateRecord(state.recordId, { feedback: feedback.dataset.feedback });
+    render();
+    return;
+  }
   const thumb = event.target.closest("[data-preview]");
   if (thumb) {
     const image = thumb.querySelector("img");
@@ -181,6 +215,7 @@ resultsEl.addEventListener("click", async (event) => {
   }, 1400);
 });
 
+renderLogTools();
 load();
 
 async function load() {
@@ -223,10 +258,21 @@ function cancelSearch() {
   state.loading = false;
 }
 
-async function search() {
+function resetAgent() {
+  state.clarify = null;
+  state.pending = null;
+  state.retried = "";
+  state.standards = null;
+  state.agentNote = "";
+  state.recordId = null;
+}
+
+// options.clarified: 確認の答えを足してやり直した質問（もう確認しない）
+async function search(options = {}) {
   state.query = qInput.value;
   clearBtn.hidden = state.query.trim() === "";
   state.error = "";
+  resetAgent();
   const query = state.query.trim();
   if (!query) {
     state.hits = null;
@@ -240,6 +286,17 @@ async function search() {
     state.hits = localHits(query);
     state.loading = false;
     state.error = "";
+    state.recordId = addRecord({ query, mode: "通常検索", flow: ["normal"], calls: 0, shown: state.hits });
+    render();
+    return;
+  }
+  // 図表番号が入っている質問は、AI を呼ばずに通常検索で返す
+  if (GuideRag.hasFigureNumber(query)) {
+    state.hits = localHits(query);
+    state.passages = null;
+    state.loading = false;
+    state.agentNote = "図表番号が入っているので、AI を使わずに通常検索で表示しています。";
+    state.recordId = addRecord({ query, mode: "AI検索", flow: ["number"], calls: 0, shown: state.hits });
     render();
     return;
   }
@@ -257,7 +314,7 @@ async function search() {
   render();
   const controller = new AbortController();
   state.controller = controller;
-  // 1) 本文の検索はブラウザで行う（rag.js）。該当箇所はすぐ表示する
+  // 1) 本文の検索はブラウザで行う（rag.js）。該当箇所は AI を待たずに表示する
   let guide;
   let req;
   try {
@@ -273,16 +330,29 @@ async function search() {
     render();
     return;
   }
-  // 2) 中継には「質問＋本文の抜粋＋候補の図表 id」だけを送り、Gemini に選ばせる
-  const payload = {
-    query,
-    kind: state.kind,
-    chapter: state.chapter,
-    passages: req.passages,
-    candidates: req.candidates,
+  const usage = { prompt: 0, output: 0, calls: 0 };
+  const flow = [];
+  const toHits = (matches) => {
+    const byId = new Map(state.rows.map((row) => [pageId(row.url), row]));
+    return (matches || [])
+      .map((match) => {
+        const row = byId.get(match.id);
+        const chunk = guide.chunkById.get(match.chunk);
+        return row ? { ...row, reason: match.reason || "", basis: chunk ? guide.passage(chunk, query) : null } : null;
+      })
+      .filter(Boolean);
   };
-  if (localAi) payload.apiKey = apiKey;
-  try {
+  const ask = async (request, attempt, extra) => {
+    const payload = {
+      query,
+      kind: state.kind,
+      chapter: state.chapter,
+      passages: request.passages,
+      candidates: request.candidates,
+      attempt,
+      ...extra,
+    };
+    if (localAi) payload.apiKey = apiKey;
     const response = await fetch(localAi ? "/api/search" : publicAi, {
       method: "POST",
       signal: controller.signal,
@@ -290,32 +360,258 @@ async function search() {
       body: JSON.stringify(payload),
     });
     const data = await response.json();
-    if (seq !== searchSeq) return;
     if (!response.ok) throw new Error(data.error || "検索に失敗しました。");
-    const byId = new Map(state.rows.map((row) => [pageId(row.url), row]));
-    state.hits = (data.matches || [])
-      .map((match) => {
-        const row = byId.get(match.id);
-        const chunk = guide.chunkById.get(match.chunk);
-        return row ? { ...row, reason: match.reason || "", basis: chunk ? guide.passage(chunk, query) : null } : null;
-      })
-      .filter(Boolean);
+    usage.calls += 1;
+    usage.prompt += Number(data.usage?.prompt) || 0;
+    usage.output += Number(data.usage?.output) || 0;
+    return data;
+  };
+  let firstHits = null;
+  try {
+    // 2) 1回目：図表選びと次の一手（ok / clarify / retry / standards）を同時に答えさせる
+    const first = await ask(req, 1, { allowClarify: !options.clarified });
+    if (seq !== searchSeq) return;
+    const next = first.next || { status: "ok" };
+    flow.push(next.status);
+    firstHits = toHits(first.matches);
+    if (next.status === "clarify" && next.clarify) {
+      state.clarify = next.clarify;
+      state.pending = firstHits;
+      state.hits = null;
+    } else if (next.status === "retry" && next.retry_query) {
+      // 3) 言い換えて、ブラウザで探し直す（AI なし）。2回目は ok に固定され、それ以上は探さない
+      state.retried = next.retry_query;
+      const retryReq = guide.request(GuideRag.retryQuery(next.retry_query, query), state.kind, state.chapter);
+      const previous = firstHits.map((row) => row.number).filter(Boolean);
+      render();
+      const second = await ask(retryReq, 2, { allowClarify: false, previous });
+      if (seq !== searchSeq) return;
+      flow.push((second.next || { status: "ok" }).status);
+      const secondHits = toHits(second.matches);
+      if (secondHits.length) {
+        state.hits = secondHits;
+        state.passages = retryReq.hits.slice(0, 3).map(([, chunk]) => guide.passage(chunk, query));
+      } else {
+        state.hits = firstHits;
+      }
+    } else {
+      if (next.status === "standards") state.standards = next.standards || { substance: "", medium: "" };
+      state.hits = firstHits;
+    }
   } catch (error) {
     if (error.name === "AbortError" || seq !== searchSeq) return;
-    // Gemini が使えないときは、本文検索だけの順位を出す
-    state.hits = req.ranked.slice(0, 8).map(([row, , chunk]) => ({
-      ...row,
-      reason: "",
-      basis: chunk ? guide.passage(chunk, query) : null,
-    }));
+    if (firstHits) {
+      // 2回目だけ失敗したときは、1回目の結果を出す
+      state.hits = firstHits;
+    } else {
+      // Gemini が使えないときは、本文検索だけの順位を出す
+      state.hits = req.ranked.slice(0, 8).map(([row, , chunk]) => ({
+        ...row,
+        reason: "",
+        basis: chunk ? guide.passage(chunk, query) : null,
+      }));
+    }
     const message = error.message === "Failed to fetch" ? "Gemini に接続できませんでした。" : (error.message || "検索に失敗しました。");
-    state.error = `${message} 本文検索だけの結果を表示しています。`;
+    state.error = firstHits ? `${message} 1回目の結果を表示しています。` : `${message} 本文検索だけの結果を表示しています。`;
+    flow.push("error");
   } finally {
     if (seq === searchSeq) {
       state.loading = false;
+      state.recordId = addRecord({
+        query,
+        mode: "AI検索",
+        flow,
+        calls: usage.calls,
+        prompt: usage.prompt,
+        output: usage.output,
+        shown: state.hits || [],
+      });
       render();
     }
   }
+}
+
+// 確認（clarify）の選択肢を選んだら、元の質問に足して新しい質問としてやり直す
+function answerClarify(option) {
+  const base = state.query.trim();
+  qInput.value = option ? `${base} ${option}` : base;
+  search({ clarified: true });
+}
+
+// 「このまま検索」：1回目に選んだ図表をそのまま出す（AI は呼ばない）
+function skipClarify() {
+  state.hits = state.pending || [];
+  state.clarify = null;
+  state.pending = null;
+  updateRecord(state.recordId, { flow: "clarify → このまま", shown: shownNumbers(state.hits) });
+  render();
+}
+
+// ---------- 試験評価のための記録（この端末の localStorage だけ。外には送らない） ----------
+
+function storageGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function storageSet(key, value) {
+  try {
+    if (value == null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    // 保存できない環境では記録しない
+  }
+}
+
+function logOn() {
+  return storageGet(CONSENT_KEY) === "yes";
+}
+
+function readLog() {
+  try {
+    const list = JSON.parse(storageGet(LOG_KEY) || "[]");
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function shownNumbers(rows) {
+  return (rows || []).filter(passesFilter).map((row) => row.number || "").filter(Boolean).join(" ");
+}
+
+function addRecord({ query, mode, flow, calls, prompt = 0, output = 0, shown }) {
+  if (!logOn()) return null;
+  const list = readLog();
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  list.push({
+    id,
+    time: localTime(new Date()),
+    query,
+    mode,
+    flow: flow.join(" → "),
+    calls,
+    prompt,
+    output,
+    shown: shownNumbers(shown),
+    feedback: "",
+  });
+  storageSet(LOG_KEY, JSON.stringify(list.slice(-2000)));
+  renderLogTools();
+  return id;
+}
+
+function updateRecord(id, patch) {
+  if (!id || !logOn()) return;
+  const list = readLog();
+  const record = list.find((item) => item.id === id);
+  if (!record) return;
+  Object.assign(record, patch);
+  storageSet(LOG_KEY, JSON.stringify(list));
+}
+
+function localTime(date) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function csvCell(value) {
+  const text = String(value ?? "");
+  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function exportLog() {
+  const head = ["日時", "質問", "方式", "statusの流れ", "AI呼び出し回数", "入力token", "出力token", "表示した図表", "評価"];
+  const rows = readLog().map((r) => [r.time, r.query, r.mode, r.flow, r.calls, r.prompt, r.output, r.shown, r.feedback]);
+  // Excel で文字化けしないように BOM を付ける
+  const csv = "﻿" + [head, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `検索記録_${localTime(new Date()).slice(0, 10).replaceAll("-", "")}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+
+function clearLog(button) {
+  if (!clearArmed) {
+    button.textContent = "もう一度押すと消します";
+    clearArmed = setTimeout(() => {
+      clearArmed = null;
+      renderLogTools();
+    }, 3000);
+    return;
+  }
+  clearTimeout(clearArmed);
+  clearArmed = null;
+  storageSet(LOG_KEY, null);
+  state.recordId = null;
+  renderLogTools();
+  render();
+}
+
+function setConsent(yes) {
+  storageSet(CONSENT_KEY, yes ? "yes" : "no");
+  if (!yes) state.recordId = null;
+  renderLogTools();
+  render();
+}
+
+function renderLogTools() {
+  const consent = storageGet(CONSENT_KEY);
+  document.getElementById("log-consent").hidden = consent === "yes" || consent === "no";
+  const tools = document.getElementById("log-tools");
+  tools.hidden = consent !== "yes" && consent !== "no";
+  const count = readLog().length;
+  document.getElementById("log-count").textContent = consent === "yes"
+    ? `この端末に検索の記録を残しています（${count}件）。外には送りません。`
+    : "検索の記録は残していません。";
+  document.getElementById("log-export").hidden = count === 0;
+  document.getElementById("log-clear").hidden = count === 0;
+  document.getElementById("log-clear").textContent = "記録を消す";
+  document.getElementById("log-toggle").textContent = consent === "yes" ? "記録をやめる" : "記録する";
+}
+
+function feedbackHtml() {
+  if (!logOn() || !state.recordId) return "";
+  const record = readLog().find((item) => item.id === state.recordId);
+  const chosen = record ? record.feedback : "";
+  const button = (label) =>
+    `<button type="button" data-feedback="${label}" class="${chosen === label ? "is-on" : ""}" aria-pressed="${chosen === label}">${label}</button>`;
+  return `<div class="feedback" aria-label="この結果の評価"><span>この結果は</span>${button("役立った")}${button("違った")}</div>`;
+}
+
+// AI 検索の途中経過（確認・探し直し・基準値の案内）
+function agentHtml() {
+  if (state.mode !== "ai") return "";
+  const parts = [];
+  if (state.agentNote) parts.push(`<p class="agent-note">${escapeHtml(state.agentNote)}</p>`);
+  if (state.retried) parts.push(`<p class="agent-note">言い換えて探し直しました：${escapeHtml(state.retried)}</p>`);
+  if (state.standards) {
+    const { substance, medium } = state.standards;
+    const what = [substance, medium].filter(Boolean).join("・");
+    parts.push(
+      `<div class="agent-box"><p>${what ? `${escapeHtml(what)}の` : ""}基準値は、法令の基準値アプリで確かめてください。` +
+        `${substance ? `（アプリで「${escapeHtml(substance)}」を探してください）` : ""}</p>` +
+        `<p><a href="${STANDARDS_URL}" target="_blank" rel="noopener">基準値アプリを開く</a></p></div>`
+    );
+  }
+  if (state.clarify) {
+    const options = state.clarify.options
+      .map((option) => `<button type="button" data-clarify="${escapeHtml(option)}">${escapeHtml(option)}</button>`)
+      .join("");
+    parts.push(
+      `<div class="agent-box clarify"><p>${escapeHtml(state.clarify.question)}</p>` +
+        `<div class="clarify-options">${options}<button type="button" data-clarify-skip>このまま検索</button></div></div>`
+    );
+  }
+  return parts.join("");
 }
 
 let guidePromise = null;
@@ -376,7 +672,12 @@ function render() {
     statusEl.textContent = state.passages
       ? `「${state.query.trim()}」 本文の該当箇所から、図表を選んでいます。`
       : `「${state.query.trim()}」 ガイドライン本文から探しています。`;
-    resultsEl.innerHTML = passagesHtml(tokens);
+    resultsEl.innerHTML = agentHtml() + passagesHtml(tokens);
+    return;
+  }
+  if (state.mode === "ai" && state.clarify) {
+    statusEl.textContent = `「${state.query.trim()}」 どちらの意味か選んでください。`;
+    resultsEl.innerHTML = agentHtml() + passagesHtml(tokens);
     return;
   }
   if (state.error && !state.hits) {
@@ -397,11 +698,11 @@ function render() {
     const detail = state.mode === "ai"
       ? "ガイドラインの構成からは、合う図表を選べませんでした。"
       : "言い方を変えるか、章の指定を外してみてください。";
-    resultsEl.innerHTML = `${passagesHtml(tokens)}
+    resultsEl.innerHTML = `${agentHtml()}${passagesHtml(tokens)}
       <div class="empty">
         <h2>見つかりませんでした</h2>
         <p>${detail}</p>
-      </div>`;
+      </div>${feedbackHtml()}`;
     return;
   }
 
@@ -428,13 +729,13 @@ function render() {
     </tr>`;
   }).join("");
 
-  resultsEl.innerHTML = `${passagesHtml(tokens)}<div class="table-wrap"><table>
+  resultsEl.innerHTML = `${agentHtml()}${passagesHtml(tokens)}<div class="table-wrap"><table>
     <caption class="visually-hidden">検索結果</caption>
     <thead><tr>
       <th>図表番号</th><th>図表名</th><th>章</th><th>節</th><th>項</th><th>ページ</th><th>操作</th>
     </tr></thead>
     <tbody>${body}</tbody>
-  </table></div>`;
+  </table></div>${feedbackHtml()}`;
   loadThumbs();
 }
 

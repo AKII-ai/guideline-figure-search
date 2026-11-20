@@ -251,7 +251,31 @@
     }
   }
 
-  const api = { Guideline, normalize, grams, baseNumber, normNum, pageId, PROMPT_CHUNKS, CANDIDATES };
+  // ---------- 軽量エージェント（tools/agent_lite.py と同じ決まり） ----------
+  // 図表番号（表2.3.1-2、図5.10.7-2、図2.3-1 など）を含む質問は、AI を呼ばずに通常検索で返す
+  const FIGURE_NUMBER = /[図表]\s*\d+(?:\s*[.．]\s*\d+)+\s*[-－‐―ー−]\s*\d+/;
+
+  function hasFigureNumber(query) {
+    return FIGURE_NUMBER.test(nfkc(query));
+  }
+
+  // 探し直すときの検索語：言い換えた言葉＋元の質問
+  function retryQuery(retry, query) {
+    return `${retry} ${query}`;
+  }
+
+  const api = {
+    Guideline,
+    normalize,
+    grams,
+    baseNumber,
+    normNum,
+    pageId,
+    hasFigureNumber,
+    retryQuery,
+    PROMPT_CHUNKS,
+    CANDIDATES,
+  };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.GuideRag = api;
 })(typeof self !== "undefined" ? self : this);
