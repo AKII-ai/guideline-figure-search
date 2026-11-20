@@ -1,0 +1,8 @@
+{
+  "_説明": "記録の「費用の目安（円）」の計算に使う。単価は 100万 token あたりの米ドル。モデルや単価が変わったらここを直す。",
+  "model": "gemini-2.5-flash",
+  "input_usd_per_million": 0.30,
+  "output_usd_per_million": 2.50,
+  "jpy_per_usd": 150,
+  "as_of": "2026-11"
+}

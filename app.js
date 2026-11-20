@@ -16,6 +16,9 @@ const state = {
   standards: null, // 基準値アプリへの案内 { substance, medium }
   agentNote: "",
   recordId: null, // 試験評価の記録（いまの検索）
+  recordSeq: null, // いまの検索の通し番号（もとの検索として次の行に入れる）
+  normal: null, // 通常検索で使った検索 { engine: "exact" | "bm25", reason }
+  pricing: null, // data/pricing.json（費用の目安）
 };
 
 const qInput = document.getElementById("q");
@@ -40,6 +43,9 @@ const STANDARDS_URL = "https://akii-ai.github.io/standards-web/";
 let clearArmed = null;
 // 試験評価の記録（この端末の localStorage だけ）
 const LOG_KEY = "searchLog";
+const DEVICE_KEY = "searchDeviceId";
+const SEQ_KEY = "searchLogSeq";
+const NORMAL_BM25_LIMIT = 15; // 通常検索で本文から探したときに出す図表の数
 
 examplesEl.innerHTML = EXAMPLES.map(
   (text) => `<button type="button" data-example="${escapeHtml(text)}">${escapeHtml(text)}</button>`
@@ -132,6 +138,7 @@ modeBar.addEventListener("click", (event) => {
   if (state.mode === "ai" && state.rows.length) ensureGuide().catch(() => {});
   cancelSearch();
   resetAgent();
+  state.normal = null;
   render();
 });
 
@@ -164,6 +171,16 @@ chapterSelect.addEventListener("change", () => {
 });
 
 resultsEl.addEventListener("click", async (event) => {
+  const opened = event.target.closest("[data-open]");
+  if (opened) {
+    recordOpened(opened.dataset.open);
+    return;
+  }
+  const switcher = event.target.closest("[data-switch]");
+  if (switcher) {
+    switchNormal(switcher.dataset.switch);
+    return;
+  }
   const option = event.target.closest("[data-clarify]");
   if (option) {
     answerClarify(option.dataset.clarify);
@@ -211,6 +228,12 @@ resultsEl.addEventListener("click", async (event) => {
   }, 1400);
 });
 
+// 中クリックで Notion を開いたときも記録する
+resultsEl.addEventListener("auxclick", (event) => {
+  const opened = event.target.closest("[data-open]");
+  if (opened && event.button === 1) recordOpened(opened.dataset.open);
+});
+
 renderLogTools();
 load();
 
@@ -219,6 +242,10 @@ async function load() {
     const response = await fetch("data/figures.json");
     if (!response.ok) throw new Error(String(response.status));
     state.rows = await response.json();
+    fetch("data/pricing.json")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((pricing) => { state.pricing = pricing; })
+      .catch(() => {});
     fillChapters(state.rows);
     render();
     if (state.mode === "ai") ensureGuide().catch(() => {});
@@ -260,15 +287,19 @@ function resetAgent() {
   state.retried = "";
   state.standards = null;
   state.agentNote = "";
-  state.recordId = null;
+  remember(null);
 }
 
 // options.clarified: 確認の答えを足してやり直した質問（もう確認しない）
+// options.parent: もとの検索の通し番号（ボタンでの切り替え・確認の選択肢でやり直したとき）
+// options.engine / options.reason: 通常検索で「本文からも探す」「完全一致に戻す」を押したとき
 async function search(options = {}) {
+  const started = performance.now();
   state.query = qInput.value;
   clearBtn.hidden = state.query.trim() === "";
   state.error = "";
   resetAgent();
+  state.normal = null;
   const query = state.query.trim();
   if (!query) {
     state.hits = null;
@@ -278,12 +309,9 @@ async function search(options = {}) {
   }
   const seq = ++searchSeq;
   if (state.controller) state.controller.abort();
+  const elapsed = () => Math.round(performance.now() - started) / 1000;
   if (state.mode !== "ai" || !aiOn) {
-    state.hits = localHits(query);
-    state.loading = false;
-    state.error = "";
-    state.recordId = addRecord({ query, mode: "通常検索", flow: ["normal"], calls: 0, shown: state.hits });
-    render();
+    await normalSearch(query, seq, options, elapsed);
     return;
   }
   // 図表番号が入っている質問は、AI を呼ばずに通常検索で返す
@@ -292,7 +320,10 @@ async function search(options = {}) {
     state.passages = null;
     state.loading = false;
     state.agentNote = "図表番号が入っているので、AI を使わずに通常検索で表示しています。";
-    state.recordId = addRecord({ query, mode: "AI検索", flow: ["number"], calls: 0, shown: state.hits });
+    remember(addRecord({
+      query, mode: "AI", engine: "完全一致", reason: "", parent: options.parent,
+      flow: "図表番号（AIなし）", shown: state.hits, seconds: elapsed(),
+    }));
     render();
     return;
   }
@@ -413,25 +444,108 @@ async function search(options = {}) {
   } finally {
     if (seq === searchSeq) {
       state.loading = false;
-      state.recordId = addRecord({
+      remember(addRecord({
         query,
-        mode: "AI検索",
-        flow,
+        mode: "AI",
+        engine: "AI",
+        reason: "",
+        parent: options.parent,
+        flow: flow.join(" → "),
         calls: usage.calls,
         prompt: usage.prompt,
         output: usage.output,
         shown: state.hits || [],
-      });
+        seconds: elapsed(),
+      }));
       render();
     }
   }
 }
 
+// ---------- 通常検索（AI なし） ----------
+// 図表番号・空白で区切った短い単語 → 完全一致。文章のとき、または完全一致で0件のとき → 本文 BM25
+async function normalSearch(query, seq, options, elapsed) {
+  let engine = options.engine || "";
+  let reason = options.reason || "";
+  if (!engine) {
+    if (GuideRag.hasFigureNumber(query)) [engine, reason] = ["exact", "図表番号"];
+    else if (GuideRag.isSentence(query)) [engine, reason] = ["bm25", "文章のため自動"];
+    else [engine, reason] = ["exact", "単語"];
+  }
+  state.passages = null;
+  state.loading = false;
+  if (engine === "exact") {
+    state.hits = localHits(query);
+    if (!state.hits.length && !options.engine) [engine, reason] = ["bm25", "0件のため自動"];
+  }
+  if (engine === "bm25") {
+    state.hits = null;
+    state.loading = true;
+    state.normal = { engine, reason };
+    render();
+    let guide;
+    try {
+      guide = await ensureGuide();
+    } catch {
+      if (seq !== searchSeq) return;
+      state.loading = false;
+      state.error = "ガイドライン本文のデータを読み込めませんでした。";
+      render();
+      return;
+    }
+    if (seq !== searchSeq) return;
+    const req = guide.request(query, state.kind, state.chapter);
+    state.passages = req.hits.slice(0, 3).map(([, chunk]) => guide.passage(chunk, query));
+    state.hits = req.ranked.slice(0, NORMAL_BM25_LIMIT).map(([row, , chunk]) => ({
+      ...row,
+      reason: "",
+      basis: chunk ? guide.passage(chunk, query) : null,
+    }));
+    state.loading = false;
+  }
+  state.normal = { engine, reason };
+  remember(addRecord({
+    query,
+    mode: "通常",
+    engine: engine === "exact" ? "完全一致" : "本文BM25",
+    reason,
+    parent: options.parent,
+    flow: "",
+    shown: state.hits,
+    seconds: elapsed(),
+  }));
+  render();
+}
+
+// 「本文からも探す」「完全一致に戻す」：同じ言葉で検索をやり直す（新しい行として記録する）
+function switchNormal(engine) {
+  qInput.value = state.query;
+  const reason = engine === "bm25" ? "「本文からも探す」ボタン" : "「完全一致に戻す」ボタン";
+  search({ engine, reason, parent: state.recordSeq });
+}
+
+function normalNoteHtml() {
+  if (state.mode === "ai" || !state.normal || state.normal.engine !== "bm25") return "";
+  const why = state.normal.reason === "0件のため自動" ? "（言葉どおりの図表がなかったため）" : "";
+  return `<p class="agent-note">本文から探しました${why}。</p>`;
+}
+
+function switchHtml() {
+  if (state.mode === "ai" || !state.normal || state.loading) return "";
+  if (state.normal.engine === "exact") {
+    return `<div class="switch"><button type="button" data-switch="bm25">本文からも探す</button></div>`;
+  }
+  if (state.normal.reason === "0件のため自動") return "";
+  return `<div class="switch"><button type="button" data-switch="exact">完全一致に戻す</button></div>`;
+}
+
 // 確認（clarify）の選択肢を選んだら、元の質問に足して新しい質問としてやり直す
 function answerClarify(option) {
   const base = state.query.trim();
+  const parent = state.recordSeq;
+  updateRecord(state.recordId, { flow: "clarify → 選択肢" });
   qInput.value = option ? `${base} ${option}` : base;
-  search({ clarified: true });
+  search({ clarified: true, parent });
 }
 
 // 「このまま検索」：1回目に選んだ図表をそのまま出す（AI は呼ばない）
@@ -439,7 +553,7 @@ function skipClarify() {
   state.hits = state.pending || [];
   state.clarify = null;
   state.pending = null;
-  updateRecord(state.recordId, { flow: "clarify → このまま", shown: shownNumbers(state.hits) });
+  updateRecord(state.recordId, { flow: "clarify → このまま検索", shown: shownNumbers(state.hits) });
   render();
 }
 
@@ -471,28 +585,59 @@ function readLog() {
   }
 }
 
-function shownNumbers(rows) {
-  return (rows || []).filter(passesFilter).map((row) => row.number || "").filter(Boolean).join(" ");
+// 端末ID：初回に作る乱数（名前や会社名は入れない）
+function deviceId() {
+  let id = storageGet(DEVICE_KEY);
+  if (!id) {
+    const bytes = new Uint8Array(6);
+    crypto.getRandomValues(bytes);
+    id = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+    storageSet(DEVICE_KEY, id);
+  }
+  return id;
 }
 
-function addRecord({ query, mode, flow, calls, prompt = 0, output = 0, shown }) {
+function nextSeq() {
+  const seq = (Number(storageGet(SEQ_KEY)) || 0) + 1;
+  storageSet(SEQ_KEY, String(seq));
+  return seq;
+}
+
+// 表示した図表番号（上位5件）
+function shownNumbers(rows) {
+  return (rows || []).filter(passesFilter).slice(0, 5).map((row) => row.number || "").filter(Boolean).join(" ");
+}
+
+function remember(record) {
+  state.recordId = record ? record.id : null;
+  state.recordSeq = record ? record.seq : null;
+}
+
+function addRecord({ query, mode, engine, reason, parent, flow, calls = 0, prompt = 0, output = 0, shown, seconds }) {
   const list = readLog();
-  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  list.push({
-    id,
+  const record = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     time: localTime(new Date()),
-    query,
+    device: deviceId(),
+    seq: nextSeq(),
+    parent: parent ?? "",
     mode,
-    flow: flow.join(" → "),
+    engine,
+    reason,
+    query,
+    flow,
     calls,
     prompt,
     output,
     shown: shownNumbers(shown),
+    opened: "",
     feedback: "",
-  });
+    seconds,
+  };
+  list.push(record);
   storageSet(LOG_KEY, JSON.stringify(list.slice(-2000)));
   renderLogTools();
-  return id;
+  return record;
 }
 
 function updateRecord(id, patch) {
@@ -500,7 +645,7 @@ function updateRecord(id, patch) {
   const list = readLog();
   const record = list.find((item) => item.id === id);
   if (!record) return;
-  Object.assign(record, patch);
+  Object.assign(record, typeof patch === "function" ? patch(record) : patch);
   storageSet(LOG_KEY, JSON.stringify(list));
 }
 
@@ -514,11 +659,37 @@ function csvCell(value) {
   return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
+// 費用の目安（円）。単価と為替は data/pricing.json から読む（コードに数字を書かない）
+function costYen(prompt, output) {
+  const p = state.pricing;
+  if (!p || (!prompt && !output)) return (0).toFixed(2);
+  const usd = (Number(prompt) || 0) / 1e6 * Number(p.input_usd_per_million) +
+    (Number(output) || 0) / 1e6 * Number(p.output_usd_per_million);
+  return (usd * Number(p.jpy_per_usd)).toFixed(2);
+}
+
+const CSV_HEAD = [
+  "日時", "端末ID", "検索の通し番号", "もとの検索", "検索モード", "使った検索", "切り替えの理由", "質問",
+  "AIの動き", "AIの呼び出し回数", "入力token", "出力token", "費用の目安（円）", "表示した図表番号（上位5件）",
+  "Notionで開いた図表番号", "評価", "最初の結果が出るまでの時間（秒）",
+];
+
+// 古い形の記録（列が足りない）も、足りない列は空欄にして書き出す
+function csvRow(r) {
+  const mode = { AI検索: "AI", 通常検索: "通常" }[r.mode] || r.mode || "";
+  const calls = r.calls ?? "";
+  return [
+    r.time ?? "", r.device ?? "", r.seq ?? "", r.parent ?? "", mode, r.engine ?? "", r.reason ?? "", r.query ?? "",
+    r.flow ?? "", calls, r.prompt ?? "", r.output ?? "",
+    r.prompt == null && r.output == null ? "" : costYen(r.prompt, r.output),
+    r.shown ?? "", r.opened ?? "", r.feedback || "未評価", r.seconds ?? "",
+  ];
+}
+
 function exportLog() {
-  const head = ["日時", "質問", "方式", "statusの流れ", "AI呼び出し回数", "入力token", "出力token", "表示した図表", "評価"];
-  const rows = readLog().map((r) => [r.time, r.query, r.mode, r.flow, r.calls, r.prompt, r.output, r.shown, r.feedback]);
+  const rows = readLog().map(csvRow);
   // Excel で文字化けしないように BOM を付ける
-  const csv = "﻿" + [head, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
+  const csv = "﻿" + [CSV_HEAD, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
   const link = document.createElement("a");
   link.href = url;
@@ -528,7 +699,6 @@ function exportLog() {
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-
 
 function clearLog(button) {
   if (!clearArmed) {
@@ -542,7 +712,7 @@ function clearLog(button) {
   clearTimeout(clearArmed);
   clearArmed = null;
   storageSet(LOG_KEY, null);
-  state.recordId = null;
+  remember(null);
   renderLogTools();
   render();
 }
@@ -555,6 +725,7 @@ function renderLogTools() {
   document.getElementById("log-clear").textContent = "記録を消す";
 }
 
+// 評価ボタン（通常検索・AI 検索で同じ見た目・同じ動き）
 function feedbackHtml() {
   if (!state.recordId) return "";
   const record = readLog().find((item) => item.id === state.recordId);
@@ -562,6 +733,16 @@ function feedbackHtml() {
   const button = (label) =>
     `<button type="button" data-feedback="${label}" class="${chosen === label ? "is-on" : ""}" aria-pressed="${chosen === label}">${label}</button>`;
   return `<div class="feedback" aria-label="この結果の評価"><span>この結果は</span>${button("役立った")}${button("違った")}</div>`;
+}
+
+// Notion で開いた図表番号を、その検索の行に足す
+function recordOpened(number) {
+  if (!number) return;
+  updateRecord(state.recordId, (record) => {
+    const opened = String(record.opened || "").split(" ").filter(Boolean);
+    if (!opened.includes(number)) opened.push(number);
+    return { opened: opened.join(" ") };
+  });
 }
 
 // AI 検索の途中経過（確認・探し直し・基準値の案内）
@@ -627,7 +808,8 @@ function whereLabel(passage) {
 }
 
 function passagesHtml(tokens) {
-  if (state.mode !== "ai" || !state.passages || !state.passages.length) return "";
+  if (!state.passages || !state.passages.length) return "";
+  if (state.mode !== "ai" && state.normal?.engine !== "bm25") return "";
   const items = state.passages
     .map(
       (passage) => `<li><span class="passage-where">${escapeHtml(whereLabel(passage))}</span>` +
@@ -642,6 +824,11 @@ function render() {
   clearBtn.hidden = state.query.trim() === "";
   if (!state.query.trim()) {
     statusEl.textContent = "内容を入れて検索すると、該当する図表を表示します。";
+    resultsEl.innerHTML = "";
+    return;
+  }
+  if (state.loading && state.mode !== "ai") {
+    statusEl.textContent = `「${state.query.trim()}」 ガイドライン本文から探しています。`;
     resultsEl.innerHTML = "";
     return;
   }
@@ -675,11 +862,11 @@ function render() {
     const detail = state.mode === "ai"
       ? "ガイドラインの構成からは、合う図表を選べませんでした。"
       : "言い方を変えるか、章の指定を外してみてください。";
-    resultsEl.innerHTML = `${agentHtml()}${passagesHtml(tokens)}
+    resultsEl.innerHTML = `${agentHtml()}${normalNoteHtml()}${passagesHtml(tokens)}
       <div class="empty">
         <h2>見つかりませんでした</h2>
         <p>${detail}</p>
-      </div>${feedbackHtml()}`;
+      </div>${switchHtml()}${feedbackHtml()}`;
     return;
   }
 
@@ -700,19 +887,19 @@ function render() {
       <td>${highlight(row.item || row.itemNo || "—", tokens)}</td>
       <td class="page-cell">${row.page == null || row.page === "" ? "—" : escapeHtml(String(row.page))}</td>
       <td class="actions">
-        <a href="${escapeHtml(row.url)}" target="_blank" rel="noopener">Notionで開く</a>
+        <a href="${escapeHtml(row.url)}" target="_blank" rel="noopener" data-open="${escapeHtml(row.number || "")}">Notionで開く</a>
         <button type="button" data-copy="${escapeHtml(cite)}">引用をコピー</button>
       </td>
     </tr>`;
   }).join("");
 
-  resultsEl.innerHTML = `${agentHtml()}${passagesHtml(tokens)}<div class="table-wrap"><table>
+  resultsEl.innerHTML = `${agentHtml()}${normalNoteHtml()}${passagesHtml(tokens)}<div class="table-wrap"><table>
     <caption class="visually-hidden">検索結果</caption>
     <thead><tr>
       <th>図表番号</th><th>図表名</th><th>章</th><th>節</th><th>項</th><th>ページ</th><th>操作</th>
     </tr></thead>
     <tbody>${body}</tbody>
-  </table></div>${feedbackHtml()}`;
+  </table></div>${switchHtml()}${feedbackHtml()}`;
   loadThumbs();
 }
 

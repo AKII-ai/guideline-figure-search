@@ -410,3 +410,17 @@ footer {
   padding: 3px 10px;
   font-size: 12px;
 }
+
+/* 通常検索：完全一致と本文 BM25 の切り替え */
+.switch {
+  margin: 12px 0 0;
+}
+
+.switch button {
+  border: 1px solid #bbb;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  padding: 6px 12px;
+}
