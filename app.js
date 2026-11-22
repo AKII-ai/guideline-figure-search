@@ -15,8 +15,7 @@ const state = {
   retried: "", // 言い換えて探し直した検索語
   standards: null, // 基準値アプリへの案内 { substance, medium }
   agentNote: "",
-  recordId: null, // 試験評価の記録（いまの検索）
-  recordSeq: null, // いまの検索の通し番号（もとの検索として次の行に入れる）
+  record: null, // 試験評価の記録（いまの検索だけ。端末には残さない）
   normal: null, // 通常検索で使った検索 { engine: "exact" | "bm25", reason }
   pricing: null, // data/pricing.json（費用の目安）
 };
@@ -40,14 +39,28 @@ const publicAi = "https://guideline-figure-search.kogama089.workers.dev";
 const localAi = location.hostname === "localhost" || location.hostname === "127.0.0.1";
 const aiOn = localAi || Boolean(publicAi);
 const STANDARDS_URL = "https://akii-ai.github.io/standards-web/";
-let clearArmed = null;
-// 試験評価の記録（この端末の localStorage。公開サイトでは中継を通して担当者の Notion にも）
+// 試験評価の記録（端末には残さない。公開サイトでは中継を通して担当者の Notion に保存する）
 const NOTION_LOG = location.origin === "https://akii-ai.github.io" ? `${publicAi}/log` : "";
 const remoteLog = new Map(); // 記録の id → 送信の順番待ち（中身は Notion の行の handle）
-const LOG_KEY = "searchLog";
+const OLD_LOG_KEY = "searchLog"; // 前の版が端末に残した記録。開いたときに消す
 const DEVICE_KEY = "searchDeviceId";
 const SEQ_KEY = "searchLogSeq";
-const NOTICE_KEY = "searchNoticeAccepted"; // 初回の説明で「わかりました」を押した
+// 評価のポップアップと保存失敗の知らせは、ここで作る（ブラウザに古い index.html が残っていても動くように）
+const rateEl = document.createElement("div");
+rateEl.id = "rate";
+rateEl.className = "rate";
+rateEl.hidden = true;
+rateEl.setAttribute("role", "dialog");
+rateEl.setAttribute("aria-labelledby", "rate-text");
+rateEl.innerHTML = `<div class="rate-box"><p id="rate-text" tabindex="-1"></p><div class="feedback">` +
+  ["役立った", "違った"].map((label) => `<button type="button" data-feedback="${label}">${label}</button>`).join("") +
+  `<button type="button" class="rate-back" data-rate-back hidden>結果に戻る</button></div></div>`;
+document.body.appendChild(rateEl);
+const logWarn = document.createElement("p");
+logWarn.className = "log-warn";
+logWarn.setAttribute("role", "alert");
+statusEl.before(logWarn);
+let afterRate = null; // 評価が済むまで止めている操作
 let accepted = !NOTION_LOG; // Notion に送らない環境（手元）では説明を出さない
 const NORMAL_BM25_LIMIT = 15; // 通常検索で本文から探したときに出す図表の数
 
@@ -122,21 +135,26 @@ qInput.addEventListener("input", () => {
 });
 
 qInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") {
+  // 日本語変換を確定する Enter では検索しない（途中の言葉が記録され、評価も求められるため）
+  if (event.key === "Enter" && !event.repeat && !event.isComposing && event.keyCode !== 229) {
     event.preventDefault();
     search();
   }
 });
 
-searchBtn.addEventListener("click", () => search());
-
-document.getElementById("log-export").addEventListener("click", () => exportLog());
-document.getElementById("log-clear").addEventListener("click", (event) => clearLog(event.currentTarget));
+// ダブルクリックの2回目では検索しない（結果を見る前に評価を求められるため）
+searchBtn.addEventListener("click", (event) => {
+  if (event.detail <= 1) search();
+});
 
 modeBar.addEventListener("click", (event) => {
   const button = event.target.closest("[data-mode]");
   if (!aiOn || !button || button.dataset.mode === state.mode) return;
-  state.mode = button.dataset.mode;
+  afterRating(() => changeMode(button.dataset.mode));
+});
+
+function changeMode(mode) {
+  state.mode = mode;
   localStorage.setItem("searchMode", state.mode);
   applyMode();
   if (state.mode === "ai" && state.rows.length) ensureGuide().catch(() => {});
@@ -144,18 +162,26 @@ modeBar.addEventListener("click", (event) => {
   resetAgent();
   state.normal = null;
   render();
-});
+}
 
 clearBtn.addEventListener("click", () => {
-  qInput.value = "";
+  afterRating(() => {
+    qInput.value = "";
+    clearResults();
+    qInput.focus();
+  });
+});
+
+function clearResults() {
+  cancelSearch();
   state.query = "";
   state.hits = null;
   state.passages = null;
   state.error = "";
+  state.normal = null;
   resetAgent();
   render();
-  qInput.focus();
-});
+}
 
 document.querySelector(".kind").addEventListener("click", (event) => {
   const button = event.target.closest("[data-kind]");
@@ -192,12 +218,6 @@ resultsEl.addEventListener("click", async (event) => {
   }
   if (event.target.closest("[data-clarify-skip]")) {
     skipClarify();
-    return;
-  }
-  const feedback = event.target.closest("[data-feedback]");
-  if (feedback) {
-    updateRecord(state.recordId, { feedback: feedback.dataset.feedback });
-    render();
     return;
   }
   const thumb = event.target.closest("[data-preview]");
@@ -238,8 +258,13 @@ resultsEl.addEventListener("auxclick", (event) => {
   if (opened && event.button === 1) recordOpened(opened.dataset.open);
 });
 
+// 「戻る」で前の画面のまま戻ったときも、説明から始めて結果を残さない
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) location.reload();
+});
+
+storageSet(OLD_LOG_KEY, null); // このキーだけを消す（localStorage は同じドメインの他のアプリと共有）
 startNotice();
-renderLogTools();
 load();
 
 async function load() {
@@ -300,6 +325,15 @@ function resetAgent() {
 // options.engine / options.reason: 通常検索で「本文からも探す」「完全一致に戻す」を押したとき
 async function search(options = {}) {
   if (!accepted) return;
+  if (needsRating()) {
+    const typed = qInput.value;
+    afterRating(() => {
+      qInput.value = typed;
+      search(options);
+    });
+    return;
+  }
+  logWarn.textContent = "";
   const started = performance.now();
   options = { ...options, sid: randomId() }; // 検索1回の印（中継の回数制限で1回に数える）
   state.query = qInput.value;
@@ -463,7 +497,7 @@ async function search(options = {}) {
         reason: "",
         parent: options.parent,
         sid: options.sid,
-        send: !limited, // 回数制限で止まった検索は Notion に送らない（端末には残す）
+        send: !limited, // 回数制限で止まった検索は Notion に送らない（評価も求めない）
         flow: flow.join(" → "),
         calls: usage.calls,
         prompt: usage.prompt,
@@ -536,9 +570,13 @@ async function normalSearch(query, seq, options, elapsed) {
 
 // 「本文からも探す」「完全一致に戻す」：同じ言葉で検索をやり直す（新しい行として記録する）
 function switchNormal(engine) {
-  qInput.value = state.query;
+  const query = state.query;
+  const parent = state.record?.seq;
   const reason = engine === "bm25" ? "「本文からも探す」ボタン" : "「完全一致に戻す」ボタン";
-  search({ engine, reason, parent: state.recordSeq });
+  afterRating(() => {
+    qInput.value = query;
+    search({ engine, reason, parent });
+  });
 }
 
 function normalNoteHtml() {
@@ -559,8 +597,8 @@ function switchHtml() {
 // 確認（clarify）の選択肢を選んだら、元の質問に足して新しい質問としてやり直す
 function answerClarify(option) {
   const base = state.query.trim();
-  const parent = state.recordSeq;
-  updateRecord(state.recordId, { flow: "clarify → 選択肢" });
+  const parent = state.record?.seq;
+  updateRecord({ flow: "clarify → 選択肢" });
   qInput.value = option ? `${base} ${option}` : base;
   search({ clarified: true, parent });
 }
@@ -570,11 +608,11 @@ function skipClarify() {
   state.hits = state.pending || [];
   state.clarify = null;
   state.pending = null;
-  updateRecord(state.recordId, { flow: "clarify → このまま検索", shown: shownNumbers(state.hits) });
+  updateRecord({ flow: "clarify → このまま検索", shown: shownNumbers(state.hits) });
   render();
 }
 
-// ---------- 試験評価のための記録（この端末＋公開サイトでは担当者の Notion） ----------
+// ---------- 試験評価のための記録（公開サイトでは担当者の Notion） ----------
 
 function storageGet(key) {
   try {
@@ -593,35 +631,22 @@ function storageSet(key, value) {
   }
 }
 
-function readLog() {
-  try {
-    const list = JSON.parse(storageGet(LOG_KEY) || "[]");
-    return Array.isArray(list) ? list : [];
-  } catch {
-    return [];
-  }
-}
-
 function randomId() {
   const bytes = new Uint8Array(6);
   crypto.getRandomValues(bytes);
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-// 初めて開いたときに一度だけ説明を出す。「わかりました」を押すまで使えない
+// 開くたびに説明を出す。「わかりました」を押すまで使えない
 function startNotice() {
-  if (accepted || storageGet(NOTICE_KEY) === "1") {
-    accepted = true;
-    return;
-  }
+  if (accepted) return;
   const notice = document.getElementById("first-notice");
-  const behind = document.querySelectorAll("body > header, body > main, body > footer");
+  const behind = document.querySelectorAll("body > header, body > main");
   behind.forEach((element) => { element.inert = true; });
   notice.hidden = false;
   const button = document.getElementById("first-notice-ok");
   button.addEventListener("click", () => {
     accepted = true;
-    storageSet(NOTICE_KEY, "1");
     notice.hidden = true;
     behind.forEach((element) => { element.inert = false; });
     qInput.focus();
@@ -651,12 +676,10 @@ function shownNumbers(rows) {
 }
 
 function remember(record) {
-  state.recordId = record ? record.id : null;
-  state.recordSeq = record ? record.seq : null;
+  state.record = record;
 }
 
 function addRecord({ sid, send = true, query, mode, engine, reason, parent, flow, calls = 0, prompt = 0, output = 0, thoughts = 0, model = "", shown, seconds }) {
-  const list = readLog();
   const record = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     time: localTime(new Date()),
@@ -679,14 +702,12 @@ function addRecord({ sid, send = true, query, mode, engine, reason, parent, flow
     feedback: "",
     seconds,
   };
-  list.push(record);
-  storageSet(LOG_KEY, JSON.stringify(list.slice(-2000)));
-  renderLogTools();
   if (send) sendRecord(record);
-  return record;
+  // 保存を止めた検索には、評価を求めない
+  return { ...record, rateable: send };
 }
 
-// Notion に送る。送れなくても検索は止めない（端末の記録は残る）。前から端末にあった記録は送らない。
+// Notion に送る。送れなくても検索は止めない（端末に控えが無いので、画面で知らせる）。
 // 混雑時のやり直しは中継がする。
 async function postLog(body) {
   try {
@@ -696,10 +717,12 @@ async function postLog(body) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    return response.ok ? await response.json() : null;
+    if (response.ok) return await response.json();
   } catch {
-    return null;
+    // 下で知らせる
   }
+  logWarn.textContent = "Notion に記録を保存できませんでした。";
+  return null;
 }
 
 function sendRecord(record) {
@@ -719,25 +742,17 @@ function sendUpdate(id, patch) {
   }));
 }
 
-function updateRecord(id, patch) {
-  if (!id) return;
-  const list = readLog();
-  const record = list.find((item) => item.id === id);
+function updateRecord(patch) {
+  const record = state.record;
   if (!record) return;
   const changed = typeof patch === "function" ? patch(record) : patch;
   Object.assign(record, changed);
-  storageSet(LOG_KEY, JSON.stringify(list));
-  sendUpdate(id, changed);
+  sendUpdate(record.id, changed);
 }
 
 function localTime(date) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-}
-
-function csvCell(value) {
-  const text = String(value ?? "");
-  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
 // 費用の目安（円）。単価と為替は data/pricing.json から読む（コードに数字を書かない）。
@@ -754,79 +769,73 @@ function costYen({ time, model, prompt, output, thoughts }) {
   return (usd * Number(p.jpy_per_usd)).toFixed(2);
 }
 
-const CSV_HEAD = [
-  "日時", "端末ID", "検索の通し番号", "もとの検索", "検索モード", "使った検索", "切り替えの理由", "質問",
-  "AIの動き", "AIの呼び出し回数", "モデル名", "入力token", "出力token", "思考token", "費用の目安（円）", "表示した図表番号（上位5件）",
-  "Notionで開いた図表番号", "評価", "最初の結果が出るまでの時間（秒）",
-];
-
-// 古い形の記録（列が足りない）も、足りない列は空欄にして書き出す
-function csvRow(r) {
-  const mode = { AI検索: "AI", 通常検索: "通常" }[r.mode] || r.mode || "";
-  const calls = r.calls ?? "";
-  return [
-    r.time ?? "", r.device ?? "", r.seq ?? "", r.parent ?? "", mode, r.engine ?? "", r.reason ?? "", r.query ?? "",
-    r.flow ?? "", calls, r.model ?? "", r.prompt ?? "", r.output ?? "", r.thoughts ?? "",
-    r.prompt == null && r.output == null ? "" : costYen(r),
-    r.shown ?? "", r.opened ?? "", r.feedback || "未評価", r.seconds ?? "",
-  ];
+// ---------- 評価のポップアップ ----------
+// 結果が出たら画面下に出す（結果は見られる）。未評価で次へ進もうとしたら中央に出して止める。
+// 評価したら結果を消して、止めていた操作を続ける。
+function needsRating() {
+  return Boolean(state.record?.rateable && !state.record.feedback && !state.loading && !state.clarify);
 }
 
-function exportLog() {
-  const rows = readLog().map(csvRow);
-  // Excel で文字化けしないように BOM を付ける
-  const csv = "﻿" + [CSV_HEAD, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n") + "\r\n";
-  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `検索記録_${localTime(new Date()).slice(0, 10).replaceAll("-", "")}.csv`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function clearLog(button) {
-  if (!clearArmed) {
-    button.textContent = "もう一度押すと消します";
-    clearArmed = setTimeout(() => {
-      clearArmed = null;
-      renderLogTools();
-    }, 3000);
+function afterRating(action) {
+  if (!needsRating()) {
+    action();
     return;
   }
-  clearTimeout(clearArmed);
-  clearArmed = null;
-  storageSet(LOG_KEY, null);
-  remember(null);
-  renderLogTools();
-  render();
+  afterRate = action;
+  renderRating();
+  // ボタンは選んだ状態にしない（Enter の二度押しで「役立った」が入らないように）
+  rateEl.querySelector("#rate-text").focus();
 }
 
-function renderLogTools() {
-  const count = readLog().length;
-  const place = NOTION_LOG ? "この端末と担当者の Notion に保存" : "この端末だけに保存";
-  document.getElementById("log-count").textContent = `検索の記録 ${count}件（${place}）`;
-  document.getElementById("log-note").hidden = !NOTION_LOG;
-  document.getElementById("log-export").hidden = count === 0;
-  document.getElementById("log-clear").hidden = count === 0;
-  document.getElementById("log-clear").textContent = "記録を消す";
+function renderRating() {
+  const shown = needsRating();
+  if (!shown) afterRate = null;
+  const blocking = Boolean(afterRate);
+  rateEl.hidden = !shown;
+  rateEl.classList.toggle("is-blocking", blocking);
+  rateEl.setAttribute("aria-modal", String(blocking));
+  rateEl.querySelector("#rate-text").textContent = blocking ? "先に、この検索の評価をお願いします" : "この結果は役に立ちましたか";
+  rateEl.querySelector("[data-rate-back]").hidden = !blocking;
+  document.body.classList.toggle("has-rate", shown);
+  // 説明を出している間は、後ろの操作止めに手を触れない
+  if (accepted) {
+    document.querySelectorAll("body > header, body > main").forEach((element) => { element.inert = blocking; });
+  }
 }
 
-// 評価ボタン（通常検索・AI 検索で同じ見た目・同じ動き）
-function feedbackHtml() {
-  if (!state.recordId) return "";
-  const record = readLog().find((item) => item.id === state.recordId);
-  const chosen = record ? record.feedback : "";
-  const button = (label) =>
-    `<button type="button" data-feedback="${label}" class="${chosen === label ? "is-on" : ""}" aria-pressed="${chosen === label}">${label}</button>`;
-  return `<div class="feedback" aria-label="この結果の評価"><span>この結果は</span>${button("役立った")}${button("違った")}</div>`;
+function rate(feedback) {
+  if (!needsRating()) return;
+  const action = afterRate;
+  updateRecord({ feedback });
+  qInput.value = "";
+  clearResults();
+  window.scrollTo(0, 0);
+  if (action) {
+    action();
+    return;
+  }
+  qInput.focus();
+  statusEl.textContent = "評価を受け付けました。次の検索ができます。";
 }
+
+function backToResults() {
+  afterRate = null;
+  renderRating();
+}
+
+rateEl.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-feedback]");
+  if (button) rate(button.dataset.feedback);
+  else if (event.target.closest("[data-rate-back]")) backToResults();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && afterRate) backToResults();
+});
 
 // Notion で開いた図表番号を、その検索の行に足す
 function recordOpened(number) {
   if (!number) return;
-  updateRecord(state.recordId, (record) => {
+  updateRecord((record) => {
     const opened = String(record.opened || "").split(" ").filter(Boolean);
     if (!opened.includes(number)) opened.push(number);
     return { opened: opened.join(" ") };
@@ -908,6 +917,7 @@ function passagesHtml(tokens) {
 }
 
 function render() {
+  renderRating();
   const tokens = tokenize(state.query);
   clearBtn.hidden = state.query.trim() === "";
   if (!state.query.trim()) {
@@ -954,7 +964,7 @@ function render() {
       <div class="empty">
         <h2>見つかりませんでした</h2>
         <p>${detail}</p>
-      </div>${switchHtml()}${feedbackHtml()}`;
+      </div>${switchHtml()}`;
     return;
   }
 
@@ -987,7 +997,7 @@ function render() {
       <th>図表番号</th><th>図表名</th><th>章</th><th>節</th><th>項</th><th>ページ</th><th>操作</th>
     </tr></thead>
     <tbody>${body}</tbody>
-  </table></div>${switchHtml()}${feedbackHtml()}`;
+  </table></div>${switchHtml()}`;
   loadThumbs();
 }
 

@@ -19,7 +19,7 @@ body {
   line-height: 1.5;
 }
 
-.mast, main, footer {
+.mast, main {
   max-width: 1100px;
   margin: 0 auto;
   padding-left: 20px;
@@ -306,12 +306,6 @@ mark { background: #fff3a0; }
   border: 0;
 }
 
-footer {
-  padding-bottom: 24px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
 .passages {
   margin: 0 0 16px;
   border: 1px solid var(--line);
@@ -370,8 +364,7 @@ footer {
 .agent-box a { color: var(--link); }
 
 .clarify-options,
-.feedback,
-.log-tools {
+.feedback {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -379,8 +372,7 @@ footer {
 }
 
 .clarify-options button,
-.feedback button,
-.log-tools button {
+.feedback button {
   border: 1px solid #bbb;
   background: #fff;
   color: var(--text);
@@ -391,24 +383,61 @@ footer {
 
 .clarify-options [data-clarify-skip] { color: var(--muted); }
 
-.feedback {
-  margin: 12px 0 0;
+/* 評価のポップアップ（普段は画面下。未評価で次へ進もうとしたら中央） */
+.rate {
+  position: fixed;
+  inset: auto 0 0;
+  z-index: 5;
+  display: flex;
+  justify-content: center;
+  padding: 10px;
+  pointer-events: none;
+}
+
+.rate[hidden],
+.rate [hidden],
+.log-warn:empty { display: none; }
+
+.rate-box {
+  width: 100%;
+  max-width: 440px;
+  padding: 12px 14px;
+  border: 1px solid #222;
+  background: var(--bg);
+  pointer-events: auto;
+}
+
+.rate-box p {
+  margin: 0 0 8px;
+  font-weight: 700;
+}
+
+#rate-text:focus { outline: none; }
+
+.feedback button {
+  flex: 1;
+  min-height: 44px;
+}
+
+.feedback .rate-back {
+  flex-basis: 100%;
+  color: var(--muted);
+}
+
+.rate.is-blocking {
+  inset: 0;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+}
+
+/* 最後の行がポップアップに隠れないように */
+body.has-rate { padding-bottom: 130px; }
+
+.log-warn {
+  margin: 14px 0 0;
+  color: #b00020;
   font-size: 13px;
-}
-
-.feedback button.is-on {
-  background: #222;
-  color: #fff;
-  border-color: #222;
-}
-
-.log-tools {
-  margin-top: 6px;
-}
-
-.log-tools button {
-  padding: 3px 10px;
-  font-size: 12px;
 }
 
 /* 通常検索：完全一致と本文 BM25 の切り替え */
@@ -425,7 +454,7 @@ footer {
   padding: 6px 12px;
 }
 
-/* 初回の説明（押すまで後ろは使えない） */
+/* 開くたびの説明（押すまで後ろは使えない） */
 .first-notice {
   position: fixed;
   inset: 0;
