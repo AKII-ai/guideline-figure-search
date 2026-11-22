@@ -424,3 +424,59 @@ footer {
   cursor: pointer;
   padding: 6px 12px;
 }
+
+/* 初回の説明（押すまで後ろは使えない） */
+.first-notice {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.first-notice[hidden],
+.wg-bar[hidden] { display: none; }
+
+.first-notice-box {
+  max-width: 440px;
+  padding: 24px;
+  background: var(--bg);
+  line-height: 1.8;
+}
+
+.first-notice-box p { margin: 0 0 18px; }
+
+.first-notice-box button {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #222;
+  background: #222;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+/* WG7 試験評価モード */
+.wg-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 20px;
+  background: #fff4d6;
+  border-bottom: 1px solid #e5c97a;
+  font-size: 13px;
+}
+
+.wg-bar button {
+  padding: 3px 10px;
+  border: 1px solid #bbb;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}

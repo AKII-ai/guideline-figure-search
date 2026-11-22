@@ -41,10 +41,16 @@ const localAi = location.hostname === "localhost" || location.hostname === "127.
 const aiOn = localAi || Boolean(publicAi);
 const STANDARDS_URL = "https://akii-ai.github.io/standards-web/";
 let clearArmed = null;
-// 試験評価の記録（この端末の localStorage だけ）
+// 試験評価の記録（この端末の localStorage。公開サイトでは中継を通して担当者の Notion にも）
+const NOTION_LOG = location.origin === "https://akii-ai.github.io" ? `${publicAi}/log` : "";
+const remoteLog = new Map(); // 記録の id → 送信の順番待ち（中身は Notion の行の handle）
 const LOG_KEY = "searchLog";
 const DEVICE_KEY = "searchDeviceId";
 const SEQ_KEY = "searchLogSeq";
+const NOTICE_KEY = "searchNoticeAccepted"; // 初回の説明で「わかりました」を押した
+const WG_KEY = "searchParticipant"; // WG7 の参加者番号（?wg=03 → WG7-03）
+let accepted = !NOTION_LOG; // Notion に送らない環境（手元）では説明を出さない
+let participant = "";
 const NORMAL_BM25_LIMIT = 15; // 通常検索で本文から探したときに出す図表の数
 
 examplesEl.innerHTML = EXAMPLES.map(
@@ -234,6 +240,8 @@ resultsEl.addEventListener("auxclick", (event) => {
   if (opened && event.button === 1) recordOpened(opened.dataset.open);
 });
 
+startNotice();
+startParticipant();
 renderLogTools();
 load();
 
@@ -294,7 +302,9 @@ function resetAgent() {
 // options.parent: もとの検索の通し番号（ボタンでの切り替え・確認の選択肢でやり直したとき）
 // options.engine / options.reason: 通常検索で「本文からも探す」「完全一致に戻す」を押したとき
 async function search(options = {}) {
+  if (!accepted) return;
   const started = performance.now();
+  options = { ...options, sid: randomId() }; // 検索1回の印（中継の回数制限で1回に数える）
   state.query = qInput.value;
   clearBtn.hidden = state.query.trim() === "";
   state.error = "";
@@ -321,7 +331,7 @@ async function search(options = {}) {
     state.loading = false;
     state.agentNote = "図表番号が入っているので、AI を使わずに通常検索で表示しています。";
     remember(addRecord({
-      query, mode: "AI", engine: "完全一致", reason: "", parent: options.parent,
+      query, mode: "AI", engine: "完全一致", reason: "", parent: options.parent, sid: options.sid,
       flow: "図表番号（AIなし）", shown: state.hits, seconds: elapsed(),
     }));
     render();
@@ -358,6 +368,7 @@ async function search(options = {}) {
     return;
   }
   const usage = { prompt: 0, output: 0, thoughts: 0, calls: 0, models: new Set() };
+  let limited = false;
   const flow = [];
   const toHits = (matches) => {
     const byId = new Map(state.rows.map((row) => [pageId(row.url), row]));
@@ -377,6 +388,7 @@ async function search(options = {}) {
       passages: request.passages,
       candidates: request.candidates,
       attempt,
+      sid: options.sid,
       ...extra,
     };
     if (localAi) payload.apiKey = apiKey;
@@ -387,6 +399,7 @@ async function search(options = {}) {
       body: JSON.stringify(payload),
     });
     const data = await response.json();
+    if (data.limited) limited = true;
     if (!response.ok) throw new Error(data.error || "検索に失敗しました。");
     usage.calls += 1;
     usage.prompt += Number(data.usage?.prompt) || 0;
@@ -452,6 +465,8 @@ async function search(options = {}) {
         engine: "AI",
         reason: "",
         parent: options.parent,
+        sid: options.sid,
+        send: !limited, // 回数制限で止まった検索は Notion に送らない（端末には残す）
         flow: flow.join(" → "),
         calls: usage.calls,
         prompt: usage.prompt,
@@ -514,6 +529,7 @@ async function normalSearch(query, seq, options, elapsed) {
     engine: engine === "exact" ? "完全一致" : "本文BM25",
     reason,
     parent: options.parent,
+    sid: options.sid,
     flow: "",
     shown: state.hits,
     seconds: elapsed(),
@@ -561,7 +577,7 @@ function skipClarify() {
   render();
 }
 
-// ---------- 試験評価のための記録（この端末の localStorage だけ。外には送らない） ----------
+// ---------- 試験評価のための記録（この端末＋公開サイトでは担当者の Notion） ----------
 
 function storageGet(key) {
   try {
@@ -589,13 +605,71 @@ function readLog() {
   }
 }
 
+function randomId() {
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// 初めて開いたときに一度だけ説明を出す。「わかりました」を押すまで使えない
+function startNotice() {
+  if (accepted || storageGet(NOTICE_KEY) === "1") {
+    accepted = true;
+    return;
+  }
+  const notice = document.getElementById("first-notice");
+  const behind = document.querySelectorAll("body > header, body > main, body > footer, #wg-bar");
+  behind.forEach((element) => { element.inert = true; });
+  notice.hidden = false;
+  const button = document.getElementById("first-notice-ok");
+  button.addEventListener("click", () => {
+    accepted = true;
+    storageSet(NOTICE_KEY, "1");
+    notice.hidden = true;
+    behind.forEach((element) => { element.inert = false; });
+    qInput.focus();
+  });
+  button.focus();
+}
+
+// 配ったリンクの ?wg=番号 を端末に覚える
+function startParticipant() {
+  participant = storageGet(WG_KEY) || "";
+  const url = new URL(location.href);
+  if (url.searchParams.has("wg")) {
+    const number = url.searchParams.get("wg").normalize("NFKC").trim();
+    if (/^\d{1,3}$/.test(number)) {
+      participant = `WG7-${String(Number(number)).padStart(2, "0")}`;
+      storageSet(WG_KEY, participant);
+    }
+    // 番号は URL から外す（「やめる」のあとの再読み込みや、URL を人に渡したときに付かないように）
+    url.searchParams.delete("wg");
+    history.replaceState(null, "", url);
+  }
+  document.getElementById("wg-leave").addEventListener("click", () => {
+    participant = "";
+    storageSet(WG_KEY, null);
+    renderParticipant();
+  });
+  // 別のタブで変わったら合わせる
+  window.addEventListener("storage", (event) => {
+    if (event.key !== WG_KEY) return;
+    participant = event.newValue || "";
+    renderParticipant();
+  });
+  renderParticipant();
+}
+
+function renderParticipant() {
+  document.getElementById("wg-bar").hidden = !participant;
+  document.getElementById("wg-label").textContent = `WG7 試験評価モード（${participant}）`;
+}
+
 // 端末ID：初回に作る乱数（名前や会社名は入れない）
 function deviceId() {
   let id = storageGet(DEVICE_KEY);
   if (!id) {
-    const bytes = new Uint8Array(6);
-    crypto.getRandomValues(bytes);
-    id = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+    id = randomId();
     storageSet(DEVICE_KEY, id);
   }
   return id;
@@ -617,12 +691,14 @@ function remember(record) {
   state.recordSeq = record ? record.seq : null;
 }
 
-function addRecord({ query, mode, engine, reason, parent, flow, calls = 0, prompt = 0, output = 0, thoughts = 0, model = "", shown, seconds }) {
+function addRecord({ sid, send = true, query, mode, engine, reason, parent, flow, calls = 0, prompt = 0, output = 0, thoughts = 0, model = "", shown, seconds }) {
   const list = readLog();
   const record = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     time: localTime(new Date()),
+    sid,
     device: deviceId(),
+    participant,
     seq: nextSeq(),
     parent: parent ?? "",
     mode,
@@ -643,7 +719,41 @@ function addRecord({ query, mode, engine, reason, parent, flow, calls = 0, promp
   list.push(record);
   storageSet(LOG_KEY, JSON.stringify(list.slice(-2000)));
   renderLogTools();
+  if (send) sendRecord(record);
   return record;
+}
+
+// Notion に送る。送れなくても検索は止めない（端末の記録は残る）。前から端末にあった記録は送らない。
+// 混雑時のやり直しは中継がする。
+async function postLog(body) {
+  try {
+    const response = await fetch(NOTION_LOG, {
+      method: "POST",
+      keepalive: true, // 検索の直後に画面を閉じても届くように
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return response.ok ? await response.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+function sendRecord(record) {
+  if (!NOTION_LOG) return;
+  const { id, query, ...rest } = record;
+  // 長い貼り付けで中継の上限を超えないように切る
+  const sent = { ...rest, query: query.slice(0, 300), cost: costYen(record) };
+  remoteLog.set(id, postLog({ record: sent }).then((data) => data?.handle || ""));
+}
+
+// あとから変わった列（評価・開いた図表など）は、行ができるのを待ってから順に直す
+function sendUpdate(id, patch) {
+  if (!remoteLog.has(id)) return;
+  remoteLog.set(id, remoteLog.get(id).then(async (handle) => {
+    if (handle) await postLog({ handle, patch });
+    return handle;
+  }));
 }
 
 function updateRecord(id, patch) {
@@ -651,8 +761,10 @@ function updateRecord(id, patch) {
   const list = readLog();
   const record = list.find((item) => item.id === id);
   if (!record) return;
-  Object.assign(record, typeof patch === "function" ? patch(record) : patch);
+  const changed = typeof patch === "function" ? patch(record) : patch;
+  Object.assign(record, changed);
   storageSet(LOG_KEY, JSON.stringify(list));
+  sendUpdate(id, changed);
 }
 
 function localTime(date) {
@@ -680,7 +792,7 @@ function costYen({ time, model, prompt, output, thoughts }) {
 }
 
 const CSV_HEAD = [
-  "日時", "端末ID", "検索の通し番号", "もとの検索", "検索モード", "使った検索", "切り替えの理由", "質問",
+  "日時", "端末ID", "参加者番号", "検索の通し番号", "もとの検索", "検索モード", "使った検索", "切り替えの理由", "質問",
   "AIの動き", "AIの呼び出し回数", "モデル名", "入力token", "出力token", "思考token", "費用の目安（円）", "表示した図表番号（上位5件）",
   "Notionで開いた図表番号", "評価", "最初の結果が出るまでの時間（秒）",
 ];
@@ -690,7 +802,7 @@ function csvRow(r) {
   const mode = { AI検索: "AI", 通常検索: "通常" }[r.mode] || r.mode || "";
   const calls = r.calls ?? "";
   return [
-    r.time ?? "", r.device ?? "", r.seq ?? "", r.parent ?? "", mode, r.engine ?? "", r.reason ?? "", r.query ?? "",
+    r.time ?? "", r.device ?? "", r.participant ?? "", r.seq ?? "", r.parent ?? "", mode, r.engine ?? "", r.reason ?? "", r.query ?? "",
     r.flow ?? "", calls, r.model ?? "", r.prompt ?? "", r.output ?? "", r.thoughts ?? "",
     r.prompt == null && r.output == null ? "" : costYen(r),
     r.shown ?? "", r.opened ?? "", r.feedback || "未評価", r.seconds ?? "",
@@ -730,7 +842,9 @@ function clearLog(button) {
 
 function renderLogTools() {
   const count = readLog().length;
-  document.getElementById("log-count").textContent = `検索の記録 ${count}件（この端末だけに保存）`;
+  const place = NOTION_LOG ? "この端末と担当者の Notion に保存" : "この端末だけに保存";
+  document.getElementById("log-count").textContent = `検索の記録 ${count}件（${place}）`;
+  document.getElementById("log-note").hidden = !NOTION_LOG;
   document.getElementById("log-export").hidden = count === 0;
   document.getElementById("log-clear").hidden = count === 0;
   document.getElementById("log-clear").textContent = "記録を消す";

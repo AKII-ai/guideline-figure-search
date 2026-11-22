@@ -7,6 +7,16 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <div id="first-notice" class="first-notice" role="dialog" aria-modal="true" aria-labelledby="first-notice-text" hidden>
+    <div class="first-notice-box">
+      <p id="first-notice-text">検索した言葉は試験評価のため担当者の Notion に保存されます。現場名・会社名・個人名は入れないでください</p>
+      <button type="button" id="first-notice-ok">わかりました</button>
+    </div>
+  </div>
+  <div id="wg-bar" class="wg-bar" hidden>
+    <span id="wg-label"></span>
+    <button type="button" id="wg-leave">やめる</button>
+  </div>
   <header class="mast">
     <h1>図表検索</h1>
     <p class="lede">土壌汚染対策法ガイドラインの図表を探せます。図は Notion で開きます。</p>
@@ -70,6 +80,7 @@
 
   <footer>
     <p>索引は Notion「エンジニアリングシート」の写しです。</p>
+    <p id="log-note" hidden>検索した言葉は、試験評価のため担当者の Notion に保存されます。現場名・会社名・個人名は入れないでください。「記録を消す」で消えるのは、この端末の記録だけです。</p>
     <div id="log-tools" class="log-tools">
       <span id="log-count"></span>
       <button type="button" id="log-export">記録を書き出す</button>
