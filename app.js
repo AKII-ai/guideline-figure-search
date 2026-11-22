@@ -48,9 +48,15 @@ const LOG_KEY = "searchLog";
 const DEVICE_KEY = "searchDeviceId";
 const SEQ_KEY = "searchLogSeq";
 const NOTICE_KEY = "searchNoticeAccepted"; // 初回の説明で「わかりました」を押した
-const WG_KEY = "searchParticipant"; // WG7 の参加者番号（?wg=03 → WG7-03）
+const WG_KEY = "searchParticipant"; // WG7 の試験評価モード（全員共通のリンク ?wg=7）
+const EXPERIENCE_KEY = "searchExperience"; // 実務経験（WG7 モードに入ったときに選ぶ）
+const SHORT_ID_KEY = "searchShortId"; // 端末ごとの4文字の ID（ヒアリングで聞く）
+const SHORT_ID_CHARS = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"; // 紛らわしい 0/O・1/I を除いた32文字
+const EXPERIENCES = ["3年未満", "3〜10年", "10年以上"];
 let accepted = !NOTION_LOG; // Notion に送らない環境（手元）では説明を出さない
 let participant = "";
+let experience = "";
+let shortId = "";
 const NORMAL_BM25_LIMIT = 15; // 通常検索で本文から探したときに出す図表の数
 
 examplesEl.innerHTML = EXAMPLES.map(
@@ -240,8 +246,8 @@ resultsEl.addEventListener("auxclick", (event) => {
   if (opened && event.button === 1) recordOpened(opened.dataset.open);
 });
 
-startNotice();
 startParticipant();
+startNotice();
 renderLogTools();
 load();
 
@@ -302,7 +308,7 @@ function resetAgent() {
 // options.parent: もとの検索の通し番号（ボタンでの切り替え・確認の選択肢でやり直したとき）
 // options.engine / options.reason: 通常検索で「本文からも探す」「完全一致に戻す」を押したとき
 async function search(options = {}) {
-  if (!accepted) return;
+  if (needsNotice()) return;
   const started = performance.now();
   options = { ...options, sid: randomId() }; // 検索1回の印（中継の回数制限で1回に数える）
   state.query = qInput.value;
@@ -611,58 +617,101 @@ function randomId() {
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-// 初めて開いたときに一度だけ説明を出す。「わかりました」を押すまで使えない
-function startNotice() {
-  if (accepted || storageGet(NOTICE_KEY) === "1") {
-    accepted = true;
-    return;
-  }
-  const notice = document.getElementById("first-notice");
-  const behind = document.querySelectorAll("body > header, body > main, body > footer, #wg-bar");
-  behind.forEach((element) => { element.inert = true; });
-  notice.hidden = false;
-  const button = document.getElementById("first-notice-ok");
-  button.addEventListener("click", () => {
-    accepted = true;
-    storageSet(NOTICE_KEY, "1");
-    notice.hidden = true;
-    behind.forEach((element) => { element.inert = false; });
-    qInput.focus();
-  });
-  button.focus();
+function makeShortId() {
+  const bytes = new Uint8Array(4);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((b) => SHORT_ID_CHARS[b % SHORT_ID_CHARS.length]).join("");
 }
 
-// 配ったリンクの ?wg=番号 を端末に覚える
+// 説明が要るのは、初めて開いたときと、WG7 モードで実務経験がまだのとき
+function needsNotice() {
+  return !accepted || Boolean(participant && !experience);
+}
+
+function startNotice() {
+  if (storageGet(NOTICE_KEY) === "1") accepted = true;
+  const choices = [...document.querySelectorAll('input[name="experience"]')];
+  const button = document.getElementById("first-notice-ok");
+  for (const choice of choices) choice.addEventListener("change", () => { button.disabled = false; });
+  button.addEventListener("click", () => {
+    if (participant && !experience) {
+      const chosen = choices.find((choice) => choice.checked);
+      if (!chosen) return;
+      experience = chosen.value;
+      storageSet(EXPERIENCE_KEY, experience);
+    }
+    accepted = true;
+    storageSet(NOTICE_KEY, "1");
+    renderNotice();
+    qInput.focus();
+  });
+  renderNotice();
+}
+
+function renderNotice() {
+  const show = needsNotice();
+  const ask = Boolean(participant && !experience);
+  const choices = [...document.querySelectorAll('input[name="experience"]')];
+  if (!ask) for (const choice of choices) choice.checked = false;
+  document.querySelectorAll("body > header, body > main, body > footer, #wg-bar").forEach((element) => {
+    element.inert = show;
+  });
+  document.getElementById("first-notice").hidden = !show;
+  document.getElementById("first-notice-text").hidden = !NOTION_LOG;
+  document.getElementById("experience-choice").hidden = !ask;
+  const button = document.getElementById("first-notice-ok");
+  button.disabled = ask && !choices.some((choice) => choice.checked);
+  if (show) (ask ? choices[0] : button).focus();
+}
+
+// 全員共通のリンク ?wg=7 から開いたら、WG7 の試験評価モードにして端末に覚える
 function startParticipant() {
-  participant = storageGet(WG_KEY) || "";
+  shortId = storageGet(SHORT_ID_KEY) || "";
+  if (shortId.length !== 4 || [...shortId].some((c) => !SHORT_ID_CHARS.includes(c))) {
+    shortId = makeShortId();
+    storageSet(SHORT_ID_KEY, shortId);
+  }
+  readParticipant();
   const url = new URL(location.href);
   if (url.searchParams.has("wg")) {
-    const number = url.searchParams.get("wg").normalize("NFKC").trim();
-    if (/^\d{1,3}$/.test(number)) {
-      participant = `WG7-${String(Number(number)).padStart(2, "0")}`;
+    if (url.searchParams.get("wg").normalize("NFKC").trim() === "7") {
+      participant = "WG7";
       storageSet(WG_KEY, participant);
     }
-    // 番号は URL から外す（「やめる」のあとの再読み込みや、URL を人に渡したときに付かないように）
+    // URL から外す（「やめる」のあとの再読み込みで、また入らないように）
     url.searchParams.delete("wg");
     history.replaceState(null, "", url);
   }
   document.getElementById("wg-leave").addEventListener("click", () => {
     participant = "";
+    experience = "";
     storageSet(WG_KEY, null);
+    storageSet(EXPERIENCE_KEY, null);
     renderParticipant();
+    renderNotice();
   });
   // 別のタブで変わったら合わせる
   window.addEventListener("storage", (event) => {
-    if (event.key !== WG_KEY) return;
-    participant = event.newValue || "";
+    if (event.key === SHORT_ID_KEY && event.newValue) shortId = event.newValue;
+    else if (event.key === NOTICE_KEY && event.newValue === "1") accepted = true;
+    else if (event.key === WG_KEY || event.key === EXPERIENCE_KEY) readParticipant();
+    else return;
     renderParticipant();
+    renderNotice();
   });
   renderParticipant();
 }
 
+function readParticipant() {
+  // 番号つきの旧リンク（WG7-03 など）で入っていた端末も WG7 にそろえる
+  participant = (storageGet(WG_KEY) || "").startsWith("WG7") ? "WG7" : "";
+  const saved = storageGet(EXPERIENCE_KEY);
+  experience = participant && EXPERIENCES.includes(saved) ? saved : "";
+}
+
 function renderParticipant() {
   document.getElementById("wg-bar").hidden = !participant;
-  document.getElementById("wg-label").textContent = `WG7 試験評価モード（${participant}）`;
+  document.getElementById("wg-label").textContent = `WG7 試験評価モード（ID：${shortId}）`;
 }
 
 // 端末ID：初回に作る乱数（名前や会社名は入れない）
@@ -699,6 +748,8 @@ function addRecord({ sid, send = true, query, mode, engine, reason, parent, flow
     sid,
     device: deviceId(),
     participant,
+    code: shortId,
+    experience,
     seq: nextSeq(),
     parent: parent ?? "",
     mode,
@@ -792,7 +843,7 @@ function costYen({ time, model, prompt, output, thoughts }) {
 }
 
 const CSV_HEAD = [
-  "日時", "端末ID", "参加者番号", "検索の通し番号", "もとの検索", "検索モード", "使った検索", "切り替えの理由", "質問",
+  "日時", "端末ID", "参加者番号", "ID", "実務経験", "検索の通し番号", "もとの検索", "検索モード", "使った検索", "切り替えの理由", "質問",
   "AIの動き", "AIの呼び出し回数", "モデル名", "入力token", "出力token", "思考token", "費用の目安（円）", "表示した図表番号（上位5件）",
   "Notionで開いた図表番号", "評価", "最初の結果が出るまでの時間（秒）",
 ];
@@ -802,7 +853,7 @@ function csvRow(r) {
   const mode = { AI検索: "AI", 通常検索: "通常" }[r.mode] || r.mode || "";
   const calls = r.calls ?? "";
   return [
-    r.time ?? "", r.device ?? "", r.participant ?? "", r.seq ?? "", r.parent ?? "", mode, r.engine ?? "", r.reason ?? "", r.query ?? "",
+    r.time ?? "", r.device ?? "", r.participant ?? "", r.code ?? "", r.experience ?? "", r.seq ?? "", r.parent ?? "", mode, r.engine ?? "", r.reason ?? "", r.query ?? "",
     r.flow ?? "", calls, r.model ?? "", r.prompt ?? "", r.output ?? "", r.thoughts ?? "",
     r.prompt == null && r.output == null ? "" : costYen(r),
     r.shown ?? "", r.opened ?? "", r.feedback || "未評価", r.seconds ?? "",
@@ -1029,7 +1080,7 @@ function render() {
 }
 
 function thumbFor(row) {
-  if (state.mode !== "ai" || !canShowThumbs()) return "";
+  if (!canShowThumbs()) return "";
   const id = pageId(row.url);
   const label = row.number || "図表";
   return `<button type="button" class="thumb" data-preview="${escapeHtml(id)}"><img alt="${escapeHtml(label)}"></button>`;
@@ -1040,7 +1091,12 @@ function canShowThumbs() {
   return Boolean(publicAi);
 }
 
+const THUMB_CACHE_MAX = 120; // 端末に持っておく画像の数
+const THUMB_PARALLEL = 4; // 同時に読む数
+const THUMB_RETRY_MS = [2000, 5000, 15000, 30000]; // Notion が混んでいたときの待ち時間
+const thumbCache = new Map(); // 図表のページ ID → blob の URL の約束
 let previewUrls = [];
+let thumbObserver = null;
 
 function notionToken() {
   if (!localAi) return "";
@@ -1056,39 +1112,92 @@ function applyNotion() {
 function revokePreviews() {
   for (const url of previewUrls) URL.revokeObjectURL(url);
   previewUrls = [];
+  thumbCache.clear();
   const preview = document.getElementById("preview");
   if (preview?.open) preview.close();
 }
 
-async function loadThumbs() {
+async function fetchThumb(id) {
   const token = notionToken();
-  revokePreviews();
-  if (state.mode !== "ai" || !canShowThumbs()) return;
-  const buttons = [...resultsEl.querySelectorAll("[data-preview]")];
-  let imageError = "";
-  await Promise.all(buttons.map(async (button) => {
-    try {
-      const id = encodeURIComponent(button.dataset.preview);
-      const response = await fetch(token ? `/api/figure?id=${id}` : `${publicAi}/figure?id=${id}`, {
-        headers: token ? { "X-Notion-Token": token } : {},
-      });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        imageError = data.error || "画像を読めませんでした。";
-        throw new Error(imageError);
-      }
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
+  const path = `figure?id=${encodeURIComponent(id)}`;
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(token ? `/api/${path}` : `${publicAi}/${path}`, {
+      headers: token ? { "X-Notion-Token": token } : {},
+    });
+    if (response.ok) {
+      const url = URL.createObjectURL(await response.blob());
       previewUrls.push(url);
+      return url;
+    }
+    if (response.status !== 429 || attempt >= THUMB_RETRY_MS.length) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || "画像を読めませんでした。");
+    }
+    await new Promise((resolve) => setTimeout(resolve, THUMB_RETRY_MS[attempt]));
+  }
+}
+
+// 画面に近づいた画像から読む（通常検索は30件出るので、一度に読むと Notion の回数制限に当たる）。
+// Gemini は呼ばない。中継の回数制限にも数えない。
+function loadThumbs() {
+  thumbObserver?.disconnect();
+  thumbObserver = null;
+  if (!canShowThumbs()) return;
+  if (previewUrls.length > THUMB_CACHE_MAX) revokePreviews();
+  const waiting = [];
+  let active = 0;
+  let failed = "";
+  let reported = false;
+
+  const show = async (button) => {
+    const id = button.dataset.preview;
+    try {
+      if (!thumbCache.has(id)) thumbCache.set(id, fetchThumb(id));
+      const url = await thumbCache.get(id);
       const image = button.querySelector("img");
       if (image) image.src = url;
-    } catch {
+    } catch (error) {
+      thumbCache.delete(id);
+      if (!button.isConnected) return;
       button.remove();
+      failed = error instanceof TypeError ? "画像を読めませんでした。" : error.message;
     }
-  }));
-  if (imageError && !resultsEl.querySelector(".thumb img[src]")) {
-    statusEl.textContent = `${statusEl.textContent} ${imageError}`;
+  };
+  const next = () => {
+    while (active < THUMB_PARALLEL && waiting.length) {
+      const button = waiting.shift();
+      if (!button.isConnected) continue; // もう別の検索に変わった
+      active += 1;
+      show(button).finally(() => {
+        active -= 1;
+        next();
+        // 読もうとした画像が全部だめだったときだけ知らせる
+        if (active || !failed || reported || resultsEl.querySelector(".thumb img[src]")) return;
+        reported = true;
+        statusEl.textContent = `${statusEl.textContent} ${failed}`;
+      });
+    }
+  };
+  const want = (button) => {
+    if (thumbCache.has(button.dataset.preview)) show(button);
+    else waiting.push(button);
+  };
+
+  const buttons = [...resultsEl.querySelectorAll("[data-preview]")];
+  if (!("IntersectionObserver" in window)) {
+    buttons.forEach(want);
+    next();
+    return;
   }
+  thumbObserver = new IntersectionObserver((entries, observer) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      observer.unobserve(entry.target);
+      want(entry.target);
+    }
+    next();
+  }, { rootMargin: "250px" });
+  buttons.forEach((button) => thumbObserver.observe(button));
 }
 
 function storedKey() {

@@ -459,6 +459,31 @@ footer {
   cursor: pointer;
 }
 
+.first-notice-box button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.first-notice {
+  overflow-y: auto;
+}
+
+.experience-choice {
+  margin: 0 0 18px;
+  padding: 4px 12px 8px;
+  border: 1px solid var(--line);
+}
+
+.experience-choice[hidden] { display: none; }
+
+.experience-choice label {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 40px;
+  cursor: pointer;
+}
+
 /* WG7 試験評価モード */
 .wg-bar {
   display: flex;
