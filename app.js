@@ -357,7 +357,7 @@ async function search(options = {}) {
     render();
     return;
   }
-  const usage = { prompt: 0, output: 0, calls: 0 };
+  const usage = { prompt: 0, output: 0, thoughts: 0, calls: 0, models: new Set() };
   const flow = [];
   const toHits = (matches) => {
     const byId = new Map(state.rows.map((row) => [pageId(row.url), row]));
@@ -391,6 +391,8 @@ async function search(options = {}) {
     usage.calls += 1;
     usage.prompt += Number(data.usage?.prompt) || 0;
     usage.output += Number(data.usage?.output) || 0;
+    usage.thoughts += Number(data.usage?.thoughts) || 0;
+    if (data.usage?.model) usage.models.add(data.usage.model);
     return data;
   };
   let firstHits = null;
@@ -454,6 +456,8 @@ async function search(options = {}) {
         calls: usage.calls,
         prompt: usage.prompt,
         output: usage.output,
+        thoughts: usage.thoughts,
+        model: [...usage.models].join(" "),
         shown: state.hits || [],
         seconds: elapsed(),
       }));
@@ -613,7 +617,7 @@ function remember(record) {
   state.recordSeq = record ? record.seq : null;
 }
 
-function addRecord({ query, mode, engine, reason, parent, flow, calls = 0, prompt = 0, output = 0, shown, seconds }) {
+function addRecord({ query, mode, engine, reason, parent, flow, calls = 0, prompt = 0, output = 0, thoughts = 0, model = "", shown, seconds }) {
   const list = readLog();
   const record = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -627,8 +631,10 @@ function addRecord({ query, mode, engine, reason, parent, flow, calls = 0, promp
     query,
     flow,
     calls,
+    model,
     prompt,
     output,
+    thoughts,
     shown: shownNumbers(shown),
     opened: "",
     feedback: "",
@@ -659,18 +665,23 @@ function csvCell(value) {
   return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
-// 費用の目安（円）。単価と為替は data/pricing.json から読む（コードに数字を書かない）
-function costYen(prompt, output) {
+// 費用の目安（円）。単価と為替は data/pricing.json から読む（コードに数字を書かない）。
+// 出力の単価は「出力 token ＋ 思考 token」に掛ける。単価は検索した日で選ぶ。分からなければ空欄（0円と書かない）
+function costYen({ time, model, prompt, output, thoughts }) {
+  if (!prompt && !output && !thoughts) return (0).toFixed(2);
   const p = state.pricing;
-  if (!p || (!prompt && !output)) return (0).toFixed(2);
-  const usd = (Number(prompt) || 0) / 1e6 * Number(p.input_usd_per_million) +
-    (Number(output) || 0) / 1e6 * Number(p.output_usd_per_million);
+  if (!p || (model && model !== p.model)) return "";
+  const day = String(time || "").slice(0, 10);
+  const price = (p.periods || []).find((x) => (!x.from || day >= x.from) && (!x.until || day <= x.until));
+  if (!price) return "";
+  const usd = (Number(prompt) || 0) / 1e6 * Number(price.input_usd_per_million) +
+    ((Number(output) || 0) + (Number(thoughts) || 0)) / 1e6 * Number(price.output_usd_per_million);
   return (usd * Number(p.jpy_per_usd)).toFixed(2);
 }
 
 const CSV_HEAD = [
   "日時", "端末ID", "検索の通し番号", "もとの検索", "検索モード", "使った検索", "切り替えの理由", "質問",
-  "AIの動き", "AIの呼び出し回数", "入力token", "出力token", "費用の目安（円）", "表示した図表番号（上位5件）",
+  "AIの動き", "AIの呼び出し回数", "モデル名", "入力token", "出力token", "思考token", "費用の目安（円）", "表示した図表番号（上位5件）",
   "Notionで開いた図表番号", "評価", "最初の結果が出るまでの時間（秒）",
 ];
 
@@ -680,8 +691,8 @@ function csvRow(r) {
   const calls = r.calls ?? "";
   return [
     r.time ?? "", r.device ?? "", r.seq ?? "", r.parent ?? "", mode, r.engine ?? "", r.reason ?? "", r.query ?? "",
-    r.flow ?? "", calls, r.prompt ?? "", r.output ?? "",
-    r.prompt == null && r.output == null ? "" : costYen(r.prompt, r.output),
+    r.flow ?? "", calls, r.model ?? "", r.prompt ?? "", r.output ?? "", r.thoughts ?? "",
+    r.prompt == null && r.output == null ? "" : costYen(r),
     r.shown ?? "", r.opened ?? "", r.feedback || "未評価", r.seconds ?? "",
   ];
 }
