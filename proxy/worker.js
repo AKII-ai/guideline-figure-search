@@ -634,8 +634,6 @@ const LOG_BODY_MAX = 6000;
 const LOG_TEXTS = [
   ["time", "日時", 19],
   ["device", "端末ID", 12],
-  ["participant", "参加者番号", 12], // WG7 モードなら WG7。正しいかは確かめない（長さだけ）
-  ["code", "ID", 4],
   ["mode", "検索モード", 10],
   ["engine", "使った検索", 20],
   ["reason", "切り替えの理由", 40],
@@ -656,7 +654,6 @@ const LOG_NUMBERS = [
   ["seconds", "最初の結果が出るまでの時間（秒）", 3600],
 ];
 const LOG_FEEDBACK = ["未評価", "役立った", "違った"];
-const LOG_EXPERIENCE = ["3年未満", "3〜10年", "10年以上"];
 const LOG_EDITABLE = ["flow", "shown", "opened", "feedback"];
 const LOG_QUESTION_MAX = 300;
 
@@ -671,9 +668,6 @@ function logProperties(raw) {
     if (!(key in raw)) continue;
     const value = raw[key] === "" || raw[key] === null ? NaN : Number(raw[key]);
     out[column] = { number: value >= 0 && value <= max ? value : null };
-  }
-  if ("experience" in raw) {
-    out["実務経験"] = { select: LOG_EXPERIENCE.includes(raw.experience) ? { name: raw.experience } : null };
   }
   if ("feedback" in raw) {
     out["評価"] = { select: { name: LOG_FEEDBACK.includes(raw.feedback) ? raw.feedback : "未評価" } };

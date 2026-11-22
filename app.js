@@ -48,15 +48,7 @@ const LOG_KEY = "searchLog";
 const DEVICE_KEY = "searchDeviceId";
 const SEQ_KEY = "searchLogSeq";
 const NOTICE_KEY = "searchNoticeAccepted"; // 初回の説明で「わかりました」を押した
-const WG_KEY = "searchParticipant"; // WG7 の試験評価モード（全員共通のリンク ?wg=7）
-const EXPERIENCE_KEY = "searchExperience"; // 実務経験（WG7 モードに入ったときに選ぶ）
-const SHORT_ID_KEY = "searchShortId"; // 端末ごとの4文字の ID（ヒアリングで聞く）
-const SHORT_ID_CHARS = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"; // 紛らわしい 0/O・1/I を除いた32文字
-const EXPERIENCES = ["3年未満", "3〜10年", "10年以上"];
 let accepted = !NOTION_LOG; // Notion に送らない環境（手元）では説明を出さない
-let participant = "";
-let experience = "";
-let shortId = "";
 const NORMAL_BM25_LIMIT = 15; // 通常検索で本文から探したときに出す図表の数
 
 examplesEl.innerHTML = EXAMPLES.map(
@@ -246,7 +238,6 @@ resultsEl.addEventListener("auxclick", (event) => {
   if (opened && event.button === 1) recordOpened(opened.dataset.open);
 });
 
-startParticipant();
 startNotice();
 renderLogTools();
 load();
@@ -308,7 +299,7 @@ function resetAgent() {
 // options.parent: もとの検索の通し番号（ボタンでの切り替え・確認の選択肢でやり直したとき）
 // options.engine / options.reason: 通常検索で「本文からも探す」「完全一致に戻す」を押したとき
 async function search(options = {}) {
-  if (needsNotice()) return;
+  if (!accepted) return;
   const started = performance.now();
   options = { ...options, sid: randomId() }; // 検索1回の印（中継の回数制限で1回に数える）
   state.query = qInput.value;
@@ -617,101 +608,25 @@ function randomId() {
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function makeShortId() {
-  const bytes = new Uint8Array(4);
-  crypto.getRandomValues(bytes);
-  return [...bytes].map((b) => SHORT_ID_CHARS[b % SHORT_ID_CHARS.length]).join("");
-}
-
-// 説明が要るのは、初めて開いたときと、WG7 モードで実務経験がまだのとき
-function needsNotice() {
-  return !accepted || Boolean(participant && !experience);
-}
-
+// 初めて開いたときに一度だけ説明を出す。「わかりました」を押すまで使えない
 function startNotice() {
-  if (storageGet(NOTICE_KEY) === "1") accepted = true;
-  const choices = [...document.querySelectorAll('input[name="experience"]')];
+  if (accepted || storageGet(NOTICE_KEY) === "1") {
+    accepted = true;
+    return;
+  }
+  const notice = document.getElementById("first-notice");
+  const behind = document.querySelectorAll("body > header, body > main, body > footer");
+  behind.forEach((element) => { element.inert = true; });
+  notice.hidden = false;
   const button = document.getElementById("first-notice-ok");
-  for (const choice of choices) choice.addEventListener("change", () => { button.disabled = false; });
   button.addEventListener("click", () => {
-    if (participant && !experience) {
-      const chosen = choices.find((choice) => choice.checked);
-      if (!chosen) return;
-      experience = chosen.value;
-      storageSet(EXPERIENCE_KEY, experience);
-    }
     accepted = true;
     storageSet(NOTICE_KEY, "1");
-    renderNotice();
+    notice.hidden = true;
+    behind.forEach((element) => { element.inert = false; });
     qInput.focus();
   });
-  renderNotice();
-}
-
-function renderNotice() {
-  const show = needsNotice();
-  const ask = Boolean(participant && !experience);
-  const choices = [...document.querySelectorAll('input[name="experience"]')];
-  if (!ask) for (const choice of choices) choice.checked = false;
-  document.querySelectorAll("body > header, body > main, body > footer, #wg-bar").forEach((element) => {
-    element.inert = show;
-  });
-  document.getElementById("first-notice").hidden = !show;
-  document.getElementById("first-notice-text").hidden = !NOTION_LOG;
-  document.getElementById("experience-choice").hidden = !ask;
-  const button = document.getElementById("first-notice-ok");
-  button.disabled = ask && !choices.some((choice) => choice.checked);
-  if (show) (ask ? choices[0] : button).focus();
-}
-
-// 全員共通のリンク ?wg=7 から開いたら、WG7 の試験評価モードにして端末に覚える
-function startParticipant() {
-  shortId = storageGet(SHORT_ID_KEY) || "";
-  if (shortId.length !== 4 || [...shortId].some((c) => !SHORT_ID_CHARS.includes(c))) {
-    shortId = makeShortId();
-    storageSet(SHORT_ID_KEY, shortId);
-  }
-  readParticipant();
-  const url = new URL(location.href);
-  if (url.searchParams.has("wg")) {
-    if (url.searchParams.get("wg").normalize("NFKC").trim() === "7") {
-      participant = "WG7";
-      storageSet(WG_KEY, participant);
-    }
-    // URL から外す（「やめる」のあとの再読み込みで、また入らないように）
-    url.searchParams.delete("wg");
-    history.replaceState(null, "", url);
-  }
-  document.getElementById("wg-leave").addEventListener("click", () => {
-    participant = "";
-    experience = "";
-    storageSet(WG_KEY, null);
-    storageSet(EXPERIENCE_KEY, null);
-    renderParticipant();
-    renderNotice();
-  });
-  // 別のタブで変わったら合わせる
-  window.addEventListener("storage", (event) => {
-    if (event.key === SHORT_ID_KEY && event.newValue) shortId = event.newValue;
-    else if (event.key === NOTICE_KEY && event.newValue === "1") accepted = true;
-    else if (event.key === WG_KEY || event.key === EXPERIENCE_KEY) readParticipant();
-    else return;
-    renderParticipant();
-    renderNotice();
-  });
-  renderParticipant();
-}
-
-function readParticipant() {
-  // 番号つきの旧リンク（WG7-03 など）で入っていた端末も WG7 にそろえる
-  participant = (storageGet(WG_KEY) || "").startsWith("WG7") ? "WG7" : "";
-  const saved = storageGet(EXPERIENCE_KEY);
-  experience = participant && EXPERIENCES.includes(saved) ? saved : "";
-}
-
-function renderParticipant() {
-  document.getElementById("wg-bar").hidden = !participant;
-  document.getElementById("wg-label").textContent = `WG7 試験評価モード（ID：${shortId}）`;
+  button.focus();
 }
 
 // 端末ID：初回に作る乱数（名前や会社名は入れない）
@@ -747,9 +662,6 @@ function addRecord({ sid, send = true, query, mode, engine, reason, parent, flow
     time: localTime(new Date()),
     sid,
     device: deviceId(),
-    participant,
-    code: shortId,
-    experience,
     seq: nextSeq(),
     parent: parent ?? "",
     mode,
@@ -843,7 +755,7 @@ function costYen({ time, model, prompt, output, thoughts }) {
 }
 
 const CSV_HEAD = [
-  "日時", "端末ID", "参加者番号", "ID", "実務経験", "検索の通し番号", "もとの検索", "検索モード", "使った検索", "切り替えの理由", "質問",
+  "日時", "端末ID", "検索の通し番号", "もとの検索", "検索モード", "使った検索", "切り替えの理由", "質問",
   "AIの動き", "AIの呼び出し回数", "モデル名", "入力token", "出力token", "思考token", "費用の目安（円）", "表示した図表番号（上位5件）",
   "Notionで開いた図表番号", "評価", "最初の結果が出るまでの時間（秒）",
 ];
@@ -853,7 +765,7 @@ function csvRow(r) {
   const mode = { AI検索: "AI", 通常検索: "通常" }[r.mode] || r.mode || "";
   const calls = r.calls ?? "";
   return [
-    r.time ?? "", r.device ?? "", r.participant ?? "", r.code ?? "", r.experience ?? "", r.seq ?? "", r.parent ?? "", mode, r.engine ?? "", r.reason ?? "", r.query ?? "",
+    r.time ?? "", r.device ?? "", r.seq ?? "", r.parent ?? "", mode, r.engine ?? "", r.reason ?? "", r.query ?? "",
     r.flow ?? "", calls, r.model ?? "", r.prompt ?? "", r.output ?? "", r.thoughts ?? "",
     r.prompt == null && r.output == null ? "" : costYen(r),
     r.shown ?? "", r.opened ?? "", r.feedback || "未評価", r.seconds ?? "",
