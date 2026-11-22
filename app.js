@@ -1375,10 +1375,27 @@ function normalize(value) {
     .trim();
 }
 
+// 比べる形（NFKC・小文字）に直した文と、その各文字が元の文のどこからどこまでか。
+// 「…」→「...」、「㎡」→「m2」、「ｶﾞ」→「ガ」のように長さが変わるので、位置をそのまま使うとずれる。
+function foldWithPositions(raw) {
+  let folded = "";
+  const starts = [];
+  const ends = [];
+  for (const found of raw.matchAll(/.[\p{M}\uFF9E\uFF9F]*/gsu)) {
+    const part = found[0].normalize("NFKC").toLowerCase();
+    folded += part;
+    for (let i = 0; i < part.length; i += 1) {
+      starts.push(found.index);
+      ends.push(found.index + found[0].length);
+    }
+  }
+  return { folded, starts, ends };
+}
+
 function highlight(text, tokens) {
   const raw = text == null ? "" : String(text);
   if (!raw || tokens.length === 0) return escapeHtml(raw);
-  const folded = raw.normalize("NFKC").toLowerCase();
+  const { folded, starts, ends } = foldWithPositions(raw);
   const ranges = [];
   for (const token of tokens) {
     const needle = token.normalize("NFKC").toLowerCase();
@@ -1387,7 +1404,7 @@ function highlight(text, tokens) {
     while (from < folded.length) {
       const at = folded.indexOf(needle, from);
       if (at < 0) break;
-      ranges.push([at, at + needle.length]);
+      ranges.push([starts[at], ends[at + needle.length - 1]]);
       from = at + needle.length;
     }
   }
