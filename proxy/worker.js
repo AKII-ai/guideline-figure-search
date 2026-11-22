@@ -19,6 +19,10 @@ const PER_MINUTE = 30; // 同じ送信元から
 const PER_DAY = 500; // 全体で。日本時間の0時に戻る
 const EDITS_PER_RECORD = 30; // 1行の記録を直せる回数（評価・開いた図表）
 
+// Notion の画像の URL は1時間有効。使い回して Notion API の回数（1分180回）を節約する
+const IMAGE_URL_MS = 45 * 60 * 1000;
+const imageUrls = new Map();
+
 let figuresCache = null;
 let figuresAt = 0;
 const imageCache = new Map();
@@ -129,8 +133,14 @@ async function figureImage(url, env) {
   if (cached && cached.until > Date.now()) {
     return imageResponse(cached.type, cached.bytes);
   }
-  const source = await notionImageUrl(figureId, token);
+  let saved = imageUrls.get(figureId);
+  if (!saved || saved.until <= Date.now()) {
+    saved = { source: await notionImageUrl(figureId, token), until: Date.now() + IMAGE_URL_MS };
+    imageUrls.set(figureId, saved);
+  }
+  const source = saved.source;
   if (!source) {
+    imageUrls.delete(figureId);
     return json({ error: "このページに画像がありません。" }, 404);
   }
   if (!allowedImageUrl(source)) {
@@ -138,6 +148,7 @@ async function figureImage(url, env) {
   }
   const response = await fetch(source, { redirect: "manual", headers: { "User-Agent": "figure-search" } });
   if (!response.ok) {
+    imageUrls.delete(figureId);
     return json({ error: "Notionから画像を読めませんでした。" }, 502);
   }
   const type = (response.headers.get("Content-Type") || "image/jpeg").split(";")[0];
@@ -623,7 +634,8 @@ const LOG_BODY_MAX = 6000;
 const LOG_TEXTS = [
   ["time", "日時", 19],
   ["device", "端末ID", 12],
-  ["participant", "参加者番号", 12], // 番号が正しいかは確かめない（長さだけ）
+  ["participant", "参加者番号", 12], // WG7 モードなら WG7。正しいかは確かめない（長さだけ）
+  ["code", "ID", 4],
   ["mode", "検索モード", 10],
   ["engine", "使った検索", 20],
   ["reason", "切り替えの理由", 40],
@@ -644,6 +656,7 @@ const LOG_NUMBERS = [
   ["seconds", "最初の結果が出るまでの時間（秒）", 3600],
 ];
 const LOG_FEEDBACK = ["未評価", "役立った", "違った"];
+const LOG_EXPERIENCE = ["3年未満", "3〜10年", "10年以上"];
 const LOG_EDITABLE = ["flow", "shown", "opened", "feedback"];
 const LOG_QUESTION_MAX = 300;
 
@@ -658,6 +671,9 @@ function logProperties(raw) {
     if (!(key in raw)) continue;
     const value = raw[key] === "" || raw[key] === null ? NaN : Number(raw[key]);
     out[column] = { number: value >= 0 && value <= max ? value : null };
+  }
+  if ("experience" in raw) {
+    out["実務経験"] = { select: LOG_EXPERIENCE.includes(raw.experience) ? { name: raw.experience } : null };
   }
   if ("feedback" in raw) {
     out["評価"] = { select: { name: LOG_FEEDBACK.includes(raw.feedback) ? raw.feedback : "未評価" } };
