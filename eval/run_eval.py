@@ -18,6 +18,7 @@
   python eval/run_eval.py --all           # 3方式（GEMINI_API_KEY が必要。.env でも可）
   python eval/run_eval.py --methods rag   # 方式を選ぶ
   python eval/run_eval.py --source claude # 質問の出どころで絞る（claude = 調整用、user = 実務者の確認用、wg = WG で集めた質問）
+                                          # wg は eval/questions_wg.jsonl だけを読み、結果は results_wg*（どちらも公開しない）
   python eval/run_eval.py --methods keyword_words --source claude --out lite --keep  # 前回の表に方式を足す
 
 質問（eval/questions.jsonl）の keywords は質問文から自然に取れる言葉だけにする（正解の図表名に合わせない）。
@@ -40,6 +41,7 @@ sys.path.insert(0, str(ROOT))
 from tools.rag import GeminiError, Guideline, base_number, embed_query, norm_num, page_id  # noqa: E402
 
 QUESTIONS = ROOT / "eval" / "questions.jsonl"
+QUESTIONS_WG = ROOT / "eval" / "questions_wg.jsonl"  # WG7 で集めた質問。.gitignore 済み（公開しない）
 RESULTS = ROOT / "eval" / "results.md"
 DETAIL = ROOT / "eval" / "results.json"
 # --source を付けたときは別のファイルに書く（全体の結果を上書きしない）
@@ -167,11 +169,19 @@ def main():
         sys.exit("GEMINI_API_KEY がありません。環境変数か .env に入れてください。")
 
     guide = Guideline(ROOT)
-    questions = [json.loads(line) for line in QUESTIONS.read_text(encoding="utf-8").splitlines() if line.strip()]
-    if args.source:
+    # wg の質問は --source wg のときだけ読む（公開する結果ファイルに混ぜない）
+    path = QUESTIONS_WG if args.source == "wg" else QUESTIONS
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    questions = [json.loads(line) for line in lines if line.strip()]
+    if path == QUESTIONS and any(q.get("source") == "wg" for q in questions):
+        sys.exit("eval/questions.jsonl は公開されます。source が wg の行は eval/questions_wg.jsonl に移してください。")
+    if args.source == "wg":
+        for q in questions:
+            q["source"] = "wg"
+    elif args.source:
         questions = [q for q in questions if q.get("source") == args.source]
     if not questions:
-        sys.exit(f"source={args.source} の質問がまだありません（eval/questions.jsonl に source が {args.source} の行を足してください）。")
+        sys.exit(f"source={args.source} の質問がまだありません（eval/{path.name} に行を足してください）。")
     detail = []
     summary = {}
     for method in methods:
@@ -273,7 +283,7 @@ def main():
     lines = [
         "# 図表検索の評価結果",
         "",
-        f"質問 {len(questions)} 問（`eval/questions.jsonl`{'、source=' + args.source if args.source else ''}）。"
+        f"質問 {len(questions)} 問（`eval/{path.name}`{'、source=' + args.source if args.source else ''}）。"
         f"命中 = 正解の図表のどれかが上位{K}件に入った割合。本文の命中 = 上位{PASSAGES}件の抜粋が正解の項に入った割合。",
         "",
         f"| 方式 | 図表の命中率 (Recall@{K}) | MRR | 本文の命中率 | AI の呼び出し（平均／最大） | 入力token（中央値） | 入力token（最大） | 応答時間（中央値） |",

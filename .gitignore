@@ -12,3 +12,6 @@ data/vectors.i8
 data/vectors.json
 .wrangler/
 発表資料/
+# WG7 で集めた質問と、その評価結果（公開しない）
+eval/questions_wg*
+eval/results_wg*
