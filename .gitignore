@@ -10,3 +10,5 @@ __pycache__/
 data/build/
 data/vectors.i8
 data/vectors.json
+.wrangler/
+発表資料/
