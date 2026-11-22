@@ -1,0 +1,2345 @@
+{
+ "summary": {
+  "rag": {
+   "recall": 1.0,
+   "mrr": 0.9479166666666666,
+   "tokens": 2448.0,
+   "tokens_max": 2616,
+   "calls": 1.0,
+   "calls_max": 1,
+   "statuses": {},
+   "time": 5.715037249998204,
+   "errors": 0,
+   "place": null
+  },
+  "agent_lite": {
+   "recall": 1.0,
+   "mrr": 0.9645833333333333,
+   "tokens": 2636.0,
+   "tokens_max": 2804,
+   "calls": 1.0,
+   "calls_max": 1,
+   "statuses": {
+    "ok": 40
+   },
+   "time": 5.931654849999177,
+   "errors": 0,
+   "place": null
+  }
+ },
+ "detail": [
+  {
+   "method": "rag",
+   "q": "地歴調査ってどういう流れで進める？",
+   "expected": [
+    "図2.3-1"
+   ],
+   "got": [
+    "図2.3-1",
+    "表2.3.1-2",
+    "図2.3.1-1",
+    "表2.3.1-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.3.1",
+    "2.3.1",
+    "2.3.1"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2263,
+   "output": 406,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "地歴で何の情報を集めればいいか一覧で見たい",
+   "expected": [
+    "表2.3.1-2"
+   ],
+   "got": [
+    "表2.3.1-2",
+    "図2.3-1",
+    "表2.3.1-1",
+    "図2.3.1-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.3.1",
+    "2.3.1",
+    "2.3.1"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2315,
+   "output": 360,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "敷地の外の周辺の土地まで情報を集めないといけないケース",
+   "expected": [
+    "図2.3.1-1"
+   ],
+   "got": [
+    "図2.3.1-1",
+    "図2.4.2-6",
+    "表2.3.1-2"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "1.5.1",
+    "2.3.1",
+    "5.4.5"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2390,
+   "output": 297,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "3条と4条で地歴の対象物質と深さがどう違うか",
+   "expected": [
+    "表2.3.1-1"
+   ],
+   "got": [
+    "表2.3.1-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.3.1",
+    "2.3.1",
+    "1.5.2"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2478,
+   "output": 108,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "トリクロロエチレンを使っていた場合、分解生成物で何を追加で対象にする？",
+   "expected": [
+    "表2.3.2-1",
+    "表1.5.1-1",
+    "表2.6.2-1",
+    "図1.2-1",
+    "表2.3.2-2"
+   ],
+   "got": [
+    "表2.3.2-1",
+    "表2.6.2-1",
+    "表2.3.2-2",
+    "表2.6.2-5",
+    "表2.6.2-6"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.6.2",
+    "2.6.2",
+    "2.4.2"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2542,
+   "output": 456,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "工場でおそれが多い・少ない・ないの区分をどう塗り分けるか例を見たい",
+   "expected": [
+    "図2.4.2-1",
+    "図2.4.2-2",
+    "図2.4.2-3"
+   ],
+   "got": [
+    "図2.4.2-1",
+    "図2.4.2-2",
+    "図2.4.2-3",
+    "図2.4.3-1",
+    "図2.4.2-6"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.4.2",
+    "2.4.2",
+    "2.4.2"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2585,
+   "output": 493,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "排水の配管が地下に埋まっている場合のおそれの区分",
+   "expected": [
+    "図2.4.2-2"
+   ],
+   "got": [
+    "図2.4.2-6",
+    "図2.4.2-3",
+    "図2.4.2-2",
+    "図2.4.2-4"
+   ],
+   "rank": 3,
+   "items": null,
+   "passages": [
+    "2.4.2",
+    "2.4.2",
+    "2.4.2"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2578,
+   "output": 411,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "2階に有害物質使用特定施設がある建物のおそれの区分",
+   "expected": [
+    "図2.4.2-8"
+   ],
+   "got": [
+    "図2.4.2-8",
+    "図2.4.2-12",
+    "図2.4.2-13",
+    "図2.4.2-9",
+    "図2.4.2-2"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.4.2",
+    "2.4.2",
+    "2.4.2"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2534,
+   "output": 486,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "水濁法の構造基準と定期点検の頻度",
+   "expected": [
+    "表2.4.2-1",
+    "表2.4.2-2",
+    "図2.4.2-10"
+   ],
+   "got": [
+    "表2.4.2-1",
+    "表2.4.2-2",
+    "図2.4.2-10"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.4.2",
+    "2.4.2",
+    "2.4.2"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2616,
+   "output": 310,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "10mメッシュの切り方と起点の決め方",
+   "expected": [
+    "図2.5.1-1(1)",
+    "図2.5.1-1(2)",
+    "図2.5.1-2"
+   ],
+   "got": [
+    "図2.5.1-1(1)",
+    "図2.5.1-1(2)",
+    "図2.5.1-5",
+    "図2.5.1-2",
+    "図2.5.1-6"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.10.8",
+    "2.5.1",
+    "2.8.2"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2557,
+   "output": 482,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "敷地の端の小さい区画を隣とまとめるルール",
+   "expected": [
+    "図2.5.1-3",
+    "図2.5.1-4"
+   ],
+   "got": [
+    "図2.5.1-4",
+    "図2.5.1-3",
+    "図2.5.1-9",
+    "図2.5.1-10",
+    "図2.9.1-2"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.6.2",
+    "2.5.1",
+    "2.9.2"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2442,
+   "output": 461,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "30mメッシュの設定方法",
+   "expected": [
+    "図2.5.1-8"
+   ],
+   "got": [
+    "図2.5.1-8",
+    "図2.5.1-9",
+    "図2.5.1-10"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.5.1",
+    "2.5.1",
+    "2.6.3"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2470,
+   "output": 282,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "VOCの試料採取等区画の選び方",
+   "expected": [
+    "図2.5.2-2",
+    "図2.5.2-5"
+   ],
+   "got": [
+    "図2.5.4-4",
+    "表2.5.4-1",
+    "図2.5.2-2",
+    "図2.8.2-3",
+    "図2.8.2-4"
+   ],
+   "rank": 3,
+   "items": null,
+   "passages": [
+    "2.8.2",
+    "A1",
+    "5.10.8"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2235,
+   "output": 508,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "重金属の調査で、どの区画で試料をとるか選ぶ方法",
+   "expected": [
+    "図2.5.2-3",
+    "図2.5.2-6"
+   ],
+   "got": [
+    "図2.5.2-6",
+    "図5.9.4-6",
+    "図5.9.4-3",
+    "図2.9.1-2",
+    "表2.5.4-2"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.5.2",
+    "5.9.4",
+    "5.10.8"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2589,
+   "output": 510,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "掘削する深さに合わせて調査する深さを限定したい",
+   "expected": [
+    "図2.5.4-1",
+    "図2.5.4-2",
+    "図2.5.4-3",
+    "図2.5.4-4",
+    "図2.5.4-5",
+    "表2.6.3-1"
+   ],
+   "got": [
+    "図5.9.4-1",
+    "図2.6.2-9",
+    "図2.6.3-9",
+    "図2.5.4-4",
+    "図5.9.4-14"
+   ],
+   "rank": 4,
+   "items": null,
+   "passages": [
+    "2.10.2",
+    "2.10.2",
+    "2.10.2"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2582,
+   "output": 492,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "土壌ガスの採取地点を区画のどこに置くか",
+   "expected": [
+    "図2.6.2-2"
+   ],
+   "got": [
+    "図2.6.2-2",
+    "図2.6.2-2",
+    "図2.6.2-3",
+    "図2.6.2-4",
+    "図5.9.4-4"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.5.2",
+    "2.6.2",
+    "2.6.2"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2452,
+   "output": 482,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "土壌ガスで検出されたあと、どこでボーリングするか（代表地点の決め方）",
+   "expected": [
+    "図2.6.2-7",
+    "図2.6.2-6",
+    "表2.6.2-4"
+   ],
+   "got": [
+    "図2.6.2-7",
+    "表2.6.2-4",
+    "図2.6.2-6",
+    "図2.7.3-2",
+    "図2.7.3-3(1)"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.7.3",
+    "2.7.3",
+    "2.7.3"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2469,
+   "output": 474,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "VOCのボーリングで何mまで、どの深さで試料をとる？",
+   "expected": [
+    "図2.6.2-8",
+    "図2.6.2-9"
+   ],
+   "got": [
+    "図2.6.2-8",
+    "図2.6.2-9",
+    "図5.3.2-6",
+    "図5.3.3-2"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.6.2",
+    "5.3.2",
+    "A1"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2317,
+   "output": 382,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "土壌ガスでPCEが出たとき、ボーリングで測る物質はどれ？",
+   "expected": [
+    "表2.6.2-5",
+    "表2.6.2-6",
+    "表2.6.2-7"
+   ],
+   "got": [
+    "表2.6.2-5",
+    "表2.6.2-6",
+    "表2.6.2-7",
+    "表2.6.2-1",
+    "図2.7.3-2"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.7.3",
+    "2.6.2",
+    "2.6.2"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2517,
+   "output": 471,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "表層と5〜50cmの土をまぜた試料の作り方",
+   "expected": [
+    "図2.6.3-12",
+    "図2.6.3-2"
+   ],
+   "got": [
+    "図2.6.3-12",
+    "図5.10.8-3（1）",
+    "図5.10.8-3（2）",
+    "図2.6.3-1",
+    "図5.10.8-6"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.6.3",
+    "2.6.3",
+    "2.6.4"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2375,
+   "output": 500,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "昔の地表が今より低かった場合の試料採取の深さ",
+   "expected": [
+    "図2.6.3-7"
+   ],
+   "got": [
+    "図2.6.3-7",
+    "図2.6.2-8",
+    "図2.6.2-3"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.6.3",
+    "2.6.2",
+    "2.6.3"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2572,
+   "output": 321,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "重金属のボーリング調査の深さの例",
+   "expected": [
+    "図2.6.4-1"
+   ],
+   "got": [
+    "図2.6.4-1",
+    "図5.3.2-6",
+    "図5.3.3-3",
+    "図5.10.8-5(2)",
+    "図2.6.2-8"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.3.2",
+    "2.6.2",
+    "5.10.8"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2357,
+   "output": 505,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "自然由来の調査で、地層からどう試料をとるか",
+   "expected": [
+    "図2.8.3-1"
+   ],
+   "got": [
+    "図2.8.3-1",
+    "図2.8.3-6",
+    "図5.9.4-12",
+    "図5.9.4-13",
+    "図5.9.4-14"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.11.3",
+    "5.9.4",
+    "2.11.3"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2470,
+   "output": 475,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "埋立地で、埋立土砂がどこにあるか分からないときの試料採取",
+   "expected": [
+    "図2.9.2-1（a）"
+   ],
+   "got": [
+    "図2.9.2-1（a）",
+    "図2.9.2-1（b）",
+    "図2.11.3-3",
+    "表2.11.3-2",
+    "図2.9.2-3"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.3.1",
+    "3.3.2",
+    "2.11.3"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2540,
+   "output": 482,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "地下水汚染がどのくらいの距離まで届くと考えるか",
+   "expected": [
+    "表1.4.2-1"
+   ],
+   "got": [
+    "表1.4.2-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.4.3",
+    "A1",
+    "1.4.2"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2317,
+   "output": 107,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "要措置区域の指定基準と地下水基準の値の一覧",
+   "expected": [
+    "表1.4.1-1"
+   ],
+   "got": [
+    "表1.4.1-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.10.7",
+    "5.6.4",
+    "5.1.1"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2222,
+   "output": 111,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "要措置区域と形質変更時要届出区域の違い",
+   "expected": [
+    "表3.3-1"
+   ],
+   "got": [
+    "表3.3-1",
+    "図5.2.1-1",
+    "表1.6.2-1",
+    "図3.3.2-1",
+    "表3.3.2-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.7.2",
+    "3.3.2",
+    "3.3.2"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2547,
+   "output": 479,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "詳細調査はどういう順番で進める？",
+   "expected": [
+    "図5.3.1-2"
+   ],
+   "got": [
+    "図5.3.1-2",
+    "図5.3.1-1(1)",
+    "図5.3.1-1(2)",
+    "図5.3.2-1",
+    "表5.3.1-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.3.1",
+    "5.3.6",
+    "5.3.2"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2202,
+   "output": 449,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "第二溶出量基準を超えたときの深度調査地点の決め方",
+   "expected": [
+    "図5.3.2-8",
+    "図5.3.2-9"
+   ],
+   "got": [
+    "図5.3.2-8",
+    "図5.3.2-9",
+    "図5.3.2-10",
+    "図5.3.2-11",
+    "図5.4.3-8(1)"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.3.2",
+    "5.3.2",
+    "5.3.2"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2236,
+   "output": 480,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "観測井の構造とスクリーンの位置",
+   "expected": [
+    "図5.4.3-2",
+    "図5.4.3-1"
+   ],
+   "got": [
+    "図5.4.3-2",
+    "図5.4.3-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.4.3",
+    "5.4.3",
+    "5.4.3"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2187,
+   "output": 197,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "原位置封じ込めのイメージ図",
+   "expected": [
+    "図5.4.3-5"
+   ],
+   "got": [
+    "図5.4.3-5",
+    "図5.4.3-7",
+    "図5.4.3-6",
+    "図5.4.3-9",
+    "図5.4.3-21"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.4.3",
+    "1.6.1",
+    "5.3.1"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2474,
+   "output": 446,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "遮水壁にはどんな種類がある？",
+   "expected": [
+    "図5.4.3-6",
+    "表5.4.3-3",
+    "図5.4.3-7"
+   ],
+   "got": [
+    "図5.4.3-6",
+    "表5.4.3-3",
+    "図5.4.3-7",
+    "図5.4.3-10",
+    "図5.4.3-9"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.4.3",
+    "A12",
+    "5.4.3"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2444,
+   "output": 434,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "掘削除去で底面の汚染をどう確認して掘る深さを決めるか",
+   "expected": [
+    "図5.4.3-18",
+    "図5.4.3-17"
+   ],
+   "got": [
+    "図5.4.3-18",
+    "図5.3.2-12",
+    "図5.4.3-17",
+    "図5.3.2-11",
+    "図5.3.2-6"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.4.3",
+    "5.3.2",
+    "5.3.2"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2365,
+   "output": 454,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "舗装措置のアスファルトの厚さの目安",
+   "expected": [
+    "表5.4.4-4",
+    "表5.4.4-1"
+   ],
+   "got": [
+    "表5.4.4-4",
+    "図5.4.4-1",
+    "図5.4.4-3",
+    "表5.4.4-1",
+    "表5.4.4-2"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.4.4",
+    "5.4.4",
+    "5.4.3"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2237,
+   "output": 467,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "認定調査の全体の流れ",
+   "expected": [
+    "図5.10.2-1"
+   ],
+   "got": [
+    "図5.10.2-1",
+    "図5.10.4-1",
+    "図5.10.7-3"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.10.2",
+    "5.10.2",
+    "1.9.1"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2086,
+   "output": 280,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "認定調査の掘削前調査での5地点混合のとり方",
+   "expected": [
+    "図5.10.8-6",
+    "図5.10.8-9（1）",
+    "図5.10.8-9（2）"
+   ],
+   "got": [
+    "図5.10.8-6",
+    "図5.10.8-9（1）",
+    "図5.10.8-9（2）",
+    "図5.10.8-8",
+    "図5.10.8-2"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.10.8",
+    "5.10.8",
+    "5.10.8"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2580,
+   "output": 463,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "汚染除去等計画に何を書けばいいか",
+   "expected": [
+    "表5.4.2-2(1)",
+    "表5.4.2-2(2)",
+    "表5.4.5-2"
+   ],
+   "got": [
+    "表5.4.2-2(1)",
+    "表5.4.2-2(2)",
+    "表5.4.2-2(3)",
+    "表5.4.2-2(4)",
+    "表5.4.2-2(5)"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.1.2",
+    "5.4.2",
+    "5.1.2"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2237,
+   "output": 445,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "12条の届出で、要届出区域で掘るときの施行方法",
+   "expected": [
+    "表5.9.1-1(1)",
+    "図5.9.3-1",
+    "図5.9.3-2",
+    "図5.9.3-3"
+   ],
+   "got": [
+    "図5.9.3-1",
+    "図5.9.3-2",
+    "図5.9.3-3",
+    "表5.9.1-1(1)",
+    "図5.9.3-4"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.9.3",
+    "A26",
+    "5.9.3"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2407,
+   "output": 482,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "工場が操業中のときの4条の届出の考え方",
+   "expected": [
+    "図2.1.4-1"
+   ],
+   "got": [
+    "図2.1.4-1",
+    "図6.4-1",
+    "図6.4.1-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.1.4",
+    "A26",
+    "A26"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2586,
+   "output": 273,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "rag",
+   "q": "臨海部特例区域の手続の全体の流れ",
+   "expected": [
+    "図6.1-1"
+   ],
+   "got": [
+    "図6.1-1",
+    "図6.3.1-1",
+    "図6.3.1-2",
+    "図6.3.1-4",
+    "図6.3.1-5"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "6.3.1",
+    "6.1",
+    "6.3.1"
+   ],
+   "place": null,
+   "calls": null,
+   "steps": null,
+   "tokens": 2288,
+   "output": 466,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "地歴調査ってどういう流れで進める？",
+   "expected": [
+    "図2.3-1"
+   ],
+   "got": [
+    "図2.3-1",
+    "表2.3.1-2",
+    "表2.3.1-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.3.1",
+    "2.3.1",
+    "2.3.1"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2451,
+   "output": 276,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "地歴で何の情報を集めればいいか一覧で見たい",
+   "expected": [
+    "表2.3.1-2"
+   ],
+   "got": [
+    "表2.3.1-2",
+    "図2.3-1",
+    "表2.3.1-1",
+    "図2.3.1-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.3.1",
+    "2.3.1",
+    "2.3.1"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2503,
+   "output": 373,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "敷地の外の周辺の土地まで情報を集めないといけないケース",
+   "expected": [
+    "図2.3.1-1"
+   ],
+   "got": [
+    "図2.3.1-1",
+    "図2.4.2-6",
+    "表2.3.1-2"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "1.5.1",
+    "2.3.1",
+    "5.4.5"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2578,
+   "output": 303,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "3条と4条で地歴の対象物質と深さがどう違うか",
+   "expected": [
+    "表2.3.1-1"
+   ],
+   "got": [
+    "表2.3.1-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.3.1",
+    "2.3.1",
+    "1.5.2"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2666,
+   "output": 120,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "トリクロロエチレンを使っていた場合、分解生成物で何を追加で対象にする？",
+   "expected": [
+    "表2.3.2-1",
+    "表1.5.1-1",
+    "表2.6.2-1",
+    "図1.2-1",
+    "表2.3.2-2"
+   ],
+   "got": [
+    "表2.3.2-1",
+    "表2.6.2-1",
+    "表2.3.2-2",
+    "表2.6.2-5"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.6.2",
+    "2.6.2",
+    "2.4.2"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2730,
+   "output": 365,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "工場でおそれが多い・少ない・ないの区分をどう塗り分けるか例を見たい",
+   "expected": [
+    "図2.4.2-1",
+    "図2.4.2-2",
+    "図2.4.2-3"
+   ],
+   "got": [
+    "図2.4.2-1",
+    "図2.4.2-2",
+    "図2.4.2-3",
+    "図2.4.3-1",
+    "図2.4.2-7"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.4.2",
+    "2.4.2",
+    "2.4.2"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2773,
+   "output": 498,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "排水の配管が地下に埋まっている場合のおそれの区分",
+   "expected": [
+    "図2.4.2-2"
+   ],
+   "got": [
+    "図2.4.2-6",
+    "図2.4.2-3",
+    "図2.4.2-2",
+    "図2.4.2-4"
+   ],
+   "rank": 3,
+   "items": null,
+   "passages": [
+    "2.4.2",
+    "2.4.2",
+    "2.4.2"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2766,
+   "output": 411,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "2階に有害物質使用特定施設がある建物のおそれの区分",
+   "expected": [
+    "図2.4.2-8"
+   ],
+   "got": [
+    "図2.4.2-8",
+    "図2.4.2-12",
+    "図2.4.2-13",
+    "図2.4.2-9",
+    "図2.4.2-2"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.4.2",
+    "2.4.2",
+    "2.4.2"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2722,
+   "output": 486,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "水濁法の構造基準と定期点検の頻度",
+   "expected": [
+    "表2.4.2-1",
+    "表2.4.2-2",
+    "図2.4.2-10"
+   ],
+   "got": [
+    "表2.4.2-2",
+    "表2.4.2-1",
+    "図2.4.2-10"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.4.2",
+    "2.4.2",
+    "2.4.2"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2804,
+   "output": 283,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "10mメッシュの切り方と起点の決め方",
+   "expected": [
+    "図2.5.1-1(1)",
+    "図2.5.1-1(2)",
+    "図2.5.1-2"
+   ],
+   "got": [
+    "図2.5.1-1(1)",
+    "図2.5.1-1(2)",
+    "図2.5.1-5",
+    "図2.5.1-2",
+    "図2.5.1-4"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.10.8",
+    "2.5.1",
+    "2.8.2"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2745,
+   "output": 473,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "敷地の端の小さい区画を隣とまとめるルール",
+   "expected": [
+    "図2.5.1-3",
+    "図2.5.1-4"
+   ],
+   "got": [
+    "図2.5.1-4",
+    "図2.5.1-3"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.6.2",
+    "2.5.1",
+    "2.9.2"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2630,
+   "output": 193,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "30mメッシュの設定方法",
+   "expected": [
+    "図2.5.1-8"
+   ],
+   "got": [
+    "図2.5.1-8",
+    "図2.5.1-9",
+    "図2.5.1-10"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.5.1",
+    "2.5.1",
+    "2.6.3"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2658,
+   "output": 290,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "VOCの試料採取等区画の選び方",
+   "expected": [
+    "図2.5.2-2",
+    "図2.5.2-5"
+   ],
+   "got": [
+    "図2.5.2-2",
+    "図2.5.4-4",
+    "表2.5.4-1",
+    "図2.8.2-3",
+    "図2.8.2-4"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.8.2",
+    "A1",
+    "5.10.8"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2423,
+   "output": 492,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "重金属の調査で、どの区画で試料をとるか選ぶ方法",
+   "expected": [
+    "図2.5.2-3",
+    "図2.5.2-6"
+   ],
+   "got": [
+    "図2.5.2-6",
+    "図2.9.1-2",
+    "図5.9.4-6",
+    "図5.9.4-3",
+    "表2.5.4-2"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.5.2",
+    "5.9.4",
+    "5.10.8"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2777,
+   "output": 497,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "掘削する深さに合わせて調査する深さを限定したい",
+   "expected": [
+    "図2.5.4-1",
+    "図2.5.4-2",
+    "図2.5.4-3",
+    "図2.5.4-4",
+    "図2.5.4-5",
+    "表2.6.3-1"
+   ],
+   "got": [
+    "図5.9.4-1",
+    "図2.6.3-9",
+    "図2.6.2-9",
+    "図2.5.4-4",
+    "図5.9.4-6"
+   ],
+   "rank": 4,
+   "items": null,
+   "passages": [
+    "2.10.2",
+    "2.10.2",
+    "2.10.2"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2770,
+   "output": 500,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "土壌ガスの採取地点を区画のどこに置くか",
+   "expected": [
+    "図2.6.2-2"
+   ],
+   "got": [
+    "図2.6.2-2",
+    "図2.6.2-2",
+    "図2.6.2-3",
+    "図2.6.2-4",
+    "図5.9.4-4"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.5.2",
+    "2.6.2",
+    "2.6.2"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2640,
+   "output": 473,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "土壌ガスで検出されたあと、どこでボーリングするか（代表地点の決め方）",
+   "expected": [
+    "図2.6.2-7",
+    "図2.6.2-6",
+    "表2.6.2-4"
+   ],
+   "got": [
+    "図2.6.2-7",
+    "表2.6.2-4",
+    "図2.6.2-6",
+    "図2.7.3-2",
+    "図2.7.3-3(1)"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.7.3",
+    "2.7.3",
+    "2.7.3"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2657,
+   "output": 475,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "VOCのボーリングで何mまで、どの深さで試料をとる？",
+   "expected": [
+    "図2.6.2-8",
+    "図2.6.2-9"
+   ],
+   "got": [
+    "図2.6.2-8",
+    "図2.6.2-9",
+    "図5.3.2-6",
+    "図5.3.3-2"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.6.2",
+    "5.3.2",
+    "A1"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2505,
+   "output": 378,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "土壌ガスでPCEが出たとき、ボーリングで測る物質はどれ？",
+   "expected": [
+    "表2.6.2-5",
+    "表2.6.2-6",
+    "表2.6.2-7"
+   ],
+   "got": [
+    "表2.6.2-5",
+    "表2.6.2-1",
+    "表2.6.2-6",
+    "表2.6.2-7",
+    "図2.7.3-2"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.7.3",
+    "2.6.2",
+    "2.6.2"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2705,
+   "output": 464,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "表層と5〜50cmの土をまぜた試料の作り方",
+   "expected": [
+    "図2.6.3-12",
+    "図2.6.3-2"
+   ],
+   "got": [
+    "図2.6.3-12",
+    "図5.10.8-3（1）",
+    "図2.6.3-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.6.3",
+    "2.6.3",
+    "2.6.4"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2563,
+   "output": 299,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "昔の地表が今より低かった場合の試料採取の深さ",
+   "expected": [
+    "図2.6.3-7"
+   ],
+   "got": [
+    "図2.6.3-7",
+    "図2.6.2-8",
+    "図5.3.2-7"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.6.3",
+    "2.6.2",
+    "2.6.3"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2760,
+   "output": 299,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "重金属のボーリング調査の深さの例",
+   "expected": [
+    "図2.6.4-1"
+   ],
+   "got": [
+    "図2.6.4-1",
+    "図5.3.2-6",
+    "図5.3.3-3",
+    "図5.10.8-5(2)",
+    "図2.6.2-8"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.3.2",
+    "2.6.2",
+    "5.10.8"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2545,
+   "output": 490,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "自然由来の調査で、地層からどう試料をとるか",
+   "expected": [
+    "図2.8.3-1"
+   ],
+   "got": [
+    "図2.8.3-1",
+    "図2.8.3-6",
+    "図2.8.3-5",
+    "図5.9.4-12",
+    "図5.9.4-14"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.11.3",
+    "5.9.4",
+    "2.11.3"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2658,
+   "output": 388,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "埋立地で、埋立土砂がどこにあるか分からないときの試料採取",
+   "expected": [
+    "図2.9.2-1（a）"
+   ],
+   "got": [
+    "図2.9.2-1（a）",
+    "図2.9.2-1（b）",
+    "図2.9.2-3"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.3.1",
+    "3.3.2",
+    "2.11.3"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2728,
+   "output": 275,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "地下水汚染がどのくらいの距離まで届くと考えるか",
+   "expected": [
+    "表1.4.2-1"
+   ],
+   "got": [
+    "表1.4.2-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.4.3",
+    "A1",
+    "1.4.2"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2505,
+   "output": 106,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "要措置区域の指定基準と地下水基準の値の一覧",
+   "expected": [
+    "表1.4.1-1"
+   ],
+   "got": [
+    "表1.4.1-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.10.7",
+    "5.6.4",
+    "5.1.1"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2410,
+   "output": 111,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "要措置区域と形質変更時要届出区域の違い",
+   "expected": [
+    "表3.3-1"
+   ],
+   "got": [
+    "表3.3-1",
+    "図5.2.1-1",
+    "表1.6.2-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.7.2",
+    "3.3.2",
+    "3.3.2"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2735,
+   "output": 282,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "詳細調査はどういう順番で進める？",
+   "expected": [
+    "図5.3.1-2"
+   ],
+   "got": [
+    "図5.3.1-2",
+    "図5.3.1-1(1)",
+    "図5.3.1-1(2)"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.3.1",
+    "5.3.6",
+    "5.3.2"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2390,
+   "output": 283,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "第二溶出量基準を超えたときの深度調査地点の決め方",
+   "expected": [
+    "図5.3.2-8",
+    "図5.3.2-9"
+   ],
+   "got": [
+    "図5.3.2-8",
+    "図5.3.2-9"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.3.2",
+    "5.3.2",
+    "5.3.2"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2424,
+   "output": 201,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "観測井の構造とスクリーンの位置",
+   "expected": [
+    "図5.4.3-2",
+    "図5.4.3-1"
+   ],
+   "got": [
+    "図5.4.3-2",
+    "図5.4.3-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.4.3",
+    "5.4.3",
+    "5.4.3"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2375,
+   "output": 197,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "原位置封じ込めのイメージ図",
+   "expected": [
+    "図5.4.3-5"
+   ],
+   "got": [
+    "図5.4.3-5",
+    "図5.4.3-6",
+    "図5.4.3-7",
+    "図5.4.3-9",
+    "図5.4.3-21"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.4.3",
+    "1.6.1",
+    "5.3.1"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2662,
+   "output": 451,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "遮水壁にはどんな種類がある？",
+   "expected": [
+    "図5.4.3-6",
+    "表5.4.3-3",
+    "図5.4.3-7"
+   ],
+   "got": [
+    "図5.4.3-6",
+    "表5.4.3-3",
+    "図5.4.3-7",
+    "図5.4.3-10"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.4.3",
+    "A12",
+    "5.4.3"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2632,
+   "output": 352,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "掘削除去で底面の汚染をどう確認して掘る深さを決めるか",
+   "expected": [
+    "図5.4.3-18",
+    "図5.4.3-17"
+   ],
+   "got": [
+    "図5.4.3-18",
+    "図5.3.2-12",
+    "図5.4.3-17",
+    "図5.3.2-6",
+    "図5.3.2-11"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.4.3",
+    "5.3.2",
+    "5.3.2"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2553,
+   "output": 460,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "舗装措置のアスファルトの厚さの目安",
+   "expected": [
+    "表5.4.4-4",
+    "表5.4.4-1"
+   ],
+   "got": [
+    "表5.4.4-4",
+    "図5.4.4-1",
+    "図5.4.4-3",
+    "表5.4.4-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.4.4",
+    "5.4.4",
+    "5.4.3"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2425,
+   "output": 375,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "認定調査の全体の流れ",
+   "expected": [
+    "図5.10.2-1"
+   ],
+   "got": [
+    "図5.10.2-1",
+    "図5.10.4-1",
+    "図5.10.7-3"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.10.2",
+    "5.10.2",
+    "1.9.1"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2274,
+   "output": 272,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "認定調査の掘削前調査での5地点混合のとり方",
+   "expected": [
+    "図5.10.8-6",
+    "図5.10.8-9（1）",
+    "図5.10.8-9（2）"
+   ],
+   "got": [
+    "図5.10.8-6",
+    "図5.10.8-9（1）",
+    "図5.10.8-9（2）",
+    "図5.10.8-8",
+    "図5.10.8-2"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.10.8",
+    "5.10.8",
+    "5.10.8"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2768,
+   "output": 445,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "汚染除去等計画に何を書けばいいか",
+   "expected": [
+    "表5.4.2-2(1)",
+    "表5.4.2-2(2)",
+    "表5.4.5-2"
+   ],
+   "got": [
+    "表5.4.2-2(1)",
+    "表5.4.5-2",
+    "表5.4.2-2(2)",
+    "表5.4.2-2(3)",
+    "図5.1.1-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.1.2",
+    "5.4.2",
+    "5.1.2"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2425,
+   "output": 444,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "12条の届出で、要届出区域で掘るときの施行方法",
+   "expected": [
+    "表5.9.1-1(1)",
+    "図5.9.3-1",
+    "図5.9.3-2",
+    "図5.9.3-3"
+   ],
+   "got": [
+    "図5.9.3-2",
+    "図5.9.3-3",
+    "図5.9.3-1",
+    "表5.9.1-1(1)",
+    "図6.4.1-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "5.9.3",
+    "A26",
+    "5.9.3"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2595,
+   "output": 449,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "工場が操業中のときの4条の届出の考え方",
+   "expected": [
+    "図2.1.4-1"
+   ],
+   "got": [
+    "図2.1.4-1",
+    "図6.4-1",
+    "図6.4.1-1"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "2.1.4",
+    "A26",
+    "A26"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2774,
+   "output": 273,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  },
+  {
+   "method": "agent_lite",
+   "q": "臨海部特例区域の手続の全体の流れ",
+   "expected": [
+    "図6.1-1"
+   ],
+   "got": [
+    "図6.1-1",
+    "図6.3.1-1",
+    "図6.3.1-2",
+    "図6.3.1-4"
+   ],
+   "rank": 1,
+   "items": null,
+   "passages": [
+    "6.3.1",
+    "6.1",
+    "6.3.1"
+   ],
+   "place": null,
+   "calls": 1,
+   "steps": [
+    "ok"
+   ],
+   "tokens": 2476,
+   "output": 374,
+   "thoughts": 0,
+   "model": "gemini-3.8-flash"
+  }
+ ]
+}

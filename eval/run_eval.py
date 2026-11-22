@@ -216,6 +216,9 @@ def main():
                     "calls": (usage or {}).get("calls"),
                     "steps": (usage or {}).get("steps"),
                     "tokens": (usage or {}).get("prompt"),
+                    "output": (usage or {}).get("output"),
+                    "thoughts": (usage or {}).get("thoughts"),
+                    "model": (usage or {}).get("model"),
                 }
             )
             mark = "o" if hit else "x"
