@@ -19,7 +19,9 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parent.parent
-MODELS = ("gemini-2.5-flash", "gemini-flash-latest")
+# モデルは固定する（-latest は知らないうちに入れ替わる）。変えたら proxy/worker.js と data/pricing.json も直す
+MODEL = "gemini-3.8-flash"
+THINKING_LEVEL = "low"  # gemini-3.8-flash の最小（minimal は 400 で断られる）
 
 TOP_CHUNKS = 12  # 図表の候補を集めるチャンク数
 PROMPT_CHUNKS = 6  # Gemini に見せるチャンク数
@@ -454,51 +456,55 @@ def message_from_google(detail, api_key):
     return message or "Gemini の検索に失敗しました。"
 
 
-def call_gemini(prompt, schema, api_key, max_tokens=1024):
-    """Gemini を1回呼び、(JSON, 使ったtoken数) を返す。"""
-    payload = {
+def gemini_payload(prompt, schema, max_tokens):
+    """Gemini に送る中身。worker.js の geminiPayload と同じ。temperature は 3.6 以降無視されるので送らない。"""
+    return {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature": 0.2,
             "maxOutputTokens": max_tokens,
-            "thinkingConfig": {"thinkingBudget": 0},
+            "thinkingConfig": {"thinkingLevel": THINKING_LEVEL},
             "responseMimeType": "application/json",
             "responseSchema": schema,
         },
     }
-    body = json.dumps(payload).encode("utf-8")
-    last_error = None
-    for model in MODELS:
-        request = Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-            data=body,
-            headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
-            method="POST",
-        )
-        try:
-            with urlopen(request, timeout=45) as response:
-                data = json.loads(response.read().decode("utf-8"))
-            break
-        except HTTPError as error:
-            detail = error.read().decode("utf-8", errors="replace")
-            last_error = (error.code, detail)
-            if error.code == 404:
-                continue
-            raise GeminiError(message_from_google(detail, api_key), error.code) from error
-        except URLError as error:
-            raise GeminiError("Gemini に接続できませんでした。", 502) from error
-    else:
-        code, detail = last_error or (502, "")
-        raise GeminiError(message_from_google(detail, api_key) or "Gemini のモデルを使えませんでした。", code)
-    parts = data["candidates"][0]["content"]["parts"]
+
+
+def call_gemini(prompt, schema, api_key, max_tokens=1024):
+    """Gemini を1回呼び、(JSON, 使ったtoken数) を返す。"""
+    request = Request(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent",
+        data=json.dumps(gemini_payload(prompt, schema, max_tokens)).encode("utf-8"),
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=45) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")
+        if error.code == 404:
+            raise GeminiError(f"Gemini のモデル {MODEL} を使えませんでした。", 502) from error
+        raise GeminiError(message_from_google(detail, api_key), error.code) from error
+    except OSError as error:  # URLError・時間切れ・切断
+        raise GeminiError("Gemini に接続できませんでした。", 502) from error
+    candidate = (data.get("candidates") or [{}])[0]
+    parts = (candidate.get("content") or {}).get("parts") or []
     text = "".join(part.get("text", "") for part in parts if not part.get("thought"))
+    if not text:
+        reason = candidate.get("finishReason") or (data.get("promptFeedback") or {}).get("blockReason") or "empty"
+        raise GeminiError(f"Gemini の応答を読み取れませんでした。（{reason}）", 502)
     start, end = text.find("{"), text.rfind("}")
     try:
         parsed = json.loads(text[start : end + 1] if start >= 0 < end else text)
     except json.JSONDecodeError as error:
         raise GeminiError("Gemini の応答を読み取れませんでした。（format）", 502) from error
     meta = data.get("usageMetadata") or {}
-    usage = {"prompt": meta.get("promptTokenCount"), "output": meta.get("candidatesTokenCount"), "model": model}
+    usage = {
+        "prompt": meta.get("promptTokenCount"),
+        "output": meta.get("candidatesTokenCount"),
+        "thoughts": meta.get("thoughtsTokenCount", 0),
+        "model": data.get("modelVersion") or MODEL,
+    }
     return parsed, usage
 
 

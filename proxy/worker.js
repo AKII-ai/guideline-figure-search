@@ -3,7 +3,9 @@
 // このファイルと GitHub にはキーを書かない。
 
 const FIGURES_URL = "https://akii-ai.github.io/guideline-figure-search/data/figures.json";
-const MODELS = ["gemini-2.5-flash", "gemini-flash-latest"];
+// モデルは固定する（-latest は知らないうちに入れ替わる）。変えたら tools/rag.py と data/pricing.json も直す
+const MODEL = "gemini-3.8-flash";
+const THINKING_LEVEL = "low"; // gemini-3.8-flash の最小（minimal は 400 で断られる）
 const ALLOWED = new Set([
   "https://akii-ai.github.io",
   "http://127.0.0.1:8765",
@@ -243,7 +245,6 @@ async function askGemini(query, listed, apiKey) {
     listed,
   ].join("\n");
   const generationConfig = {
-    temperature: 0.2,
     maxOutputTokens: 4096,
     responseMimeType: "application/json",
     responseSchema: {
@@ -268,52 +269,48 @@ async function askGemini(query, listed, apiKey) {
   return text;
 }
 
-// Gemini を1回呼ぶ。{ text, usage } を返す
-async function callGemini(prompt, schema, apiKey, maxTokens) {
-  const body = JSON.stringify({
+// Gemini に送る中身。tools/rag.py の gemini_payload と同じ。temperature は 3.6 以降無視されるので送らない
+function geminiPayload(prompt, schema, maxTokens) {
+  return {
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig: {
-      temperature: 0.2,
       maxOutputTokens: maxTokens,
-      thinkingConfig: { thinkingBudget: 0 },
+      thinkingConfig: { thinkingLevel: THINKING_LEVEL },
       responseMimeType: "application/json",
       responseSchema: schema,
     },
+  };
+}
+
+// Gemini を1回呼ぶ。{ text, usage } を返す
+async function callGemini(prompt, schema, apiKey, maxTokens) {
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey,
+    },
+    body: JSON.stringify(geminiPayload(prompt, schema, maxTokens)),
   });
-  let lastStatus = 502;
-  let lastDetail = "";
-  let lastReason = "";
-  for (const model of MODELS) {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": apiKey,
-        },
-        body,
-      }
-    );
-    if (response.ok) {
-      const data = await response.json();
-      const text = visibleText(data);
-      const meta = data.usageMetadata || {};
-      if (text) return { text, usage: { prompt: meta.promptTokenCount, output: meta.candidatesTokenCount, model } };
-      lastReason = data.candidates?.[0]?.finishReason || data.promptFeedback?.blockReason || "empty";
-      continue;
-    }
-    lastStatus = response.status;
-    lastDetail = await response.text();
-    if (response.status === 404) continue;
-    throw Object.assign(new Error(messageFromGoogle(lastDetail, apiKey)), { status: clientStatus(response.status) });
+  if (!response.ok) {
+    const detail = await response.text();
+    const message = response.status === 404 ? `Gemini のモデル ${MODEL} を使えませんでした。` : messageFromGoogle(detail, apiKey);
+    throw Object.assign(new Error(message), { status: clientStatus(response.status) });
   }
-  if (lastReason) {
-    throw Object.assign(new Error(`Gemini の応答を読み取れませんでした。（${lastReason}）`), { status: 502 });
+  const data = await response.json();
+  const text = visibleText(data);
+  if (!text) {
+    const reason = data.candidates?.[0]?.finishReason || data.promptFeedback?.blockReason || "empty";
+    throw Object.assign(new Error(`Gemini の応答を読み取れませんでした。（${reason}）`), { status: 502 });
   }
-  throw Object.assign(new Error(messageFromGoogle(lastDetail, apiKey) || "Gemini のモデルを使えませんでした。"), {
-    status: clientStatus(lastStatus),
-  });
+  const meta = data.usageMetadata || {};
+  const usage = {
+    prompt: meta.promptTokenCount,
+    output: meta.candidatesTokenCount,
+    thoughts: meta.thoughtsTokenCount ?? 0,
+    model: data.modelVersion || MODEL,
+  };
+  return { text, usage };
 }
 
 // ---------- RAG（tools/rag.py の clean_request / build_prompt と同じ） ----------

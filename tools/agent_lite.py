@@ -172,12 +172,14 @@ class AgentLite:
 
     def search(self, query, api_key, allow_clarify=True):
         """戻り値は Guideline.search と同じ形。usage は全呼び出しの合計、steps に status の流れを残す。"""
-        total = {"prompt": 0, "output": 0, "calls": 0, "steps": []}
+        total = {"prompt": 0, "output": 0, "thoughts": 0, "model": "", "calls": 0, "steps": []}
 
         def add(usage):
             total["calls"] += 1
             total["prompt"] += (usage or {}).get("prompt") or 0
             total["output"] += (usage or {}).get("output") or 0
+            total["thoughts"] += (usage or {}).get("thoughts") or 0
+            total["model"] = (usage or {}).get("model") or total["model"]
 
         if has_figure_number(query):
             rows = keyword_search(self.guide.figures, query)

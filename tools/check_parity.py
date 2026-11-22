@@ -6,6 +6,7 @@
   - Gemini に送る抜粋の id と、図表の候補の id の並び（rag.py ⇔ rag.js）
   - 軽量エージェントのプロンプト（1回目・確認なし・2回目）（agent_lite.py ⇔ worker.js）
   - 探し直しの検索語で探した候補（agent_lite.py ⇔ rag.js）
+  - Gemini のモデル名と送る中身（rag.py ⇔ worker.js）、料金表のモデル名
   - 図表番号の見分け、次の一手の確かめ方（clean_next ⇔ cleanNext）
   - 通常検索：文章かどうかの見分け（normal_search.py ⇔ rag.js）と、完全一致の並び（normal_search.py ⇔ app.js の localHits）
 """
@@ -18,9 +19,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from tools.agent_lite import AgentLite, agent_prompt, clean_next, has_figure_number, retry_query  # noqa: E402
+from tools.agent_lite import AGENT_SCHEMA, AgentLite, agent_prompt, clean_next, has_figure_number, retry_query  # noqa: E402
 from tools.normal_search import exact_hits, is_sentence  # noqa: E402
-from tools.rag import Guideline, clean_request  # noqa: E402
+from tools.rag import MATCH_SCHEMA, MODEL, Guideline, clean_request, gemini_payload  # noqa: E402
 
 NODE = r"""
 const fs = require("fs");
@@ -35,7 +36,7 @@ const guide = new rag.Guideline(read("chunks.json"), figures, read("synonyms.jso
 const src = fs.readFileSync(path.join(root, "proxy", "worker.js"), "utf8").replace("export default {", "const __worker = {");
 const box = { console, URL, Response: function () {}, Headers: function () {} };
 vm.createContext(box);
-vm.runInContext(src + "\n;this.W = { cleanRequest, buildAgentPrompt, cleanNext, cleanPrevious };", box);
+vm.runInContext(src + "\n;this.W = { cleanRequest, buildAgentPrompt, cleanNext, cleanPrevious, MODEL, geminiPayload, AGENT_SCHEMA, MATCH_SCHEMA };", box);
 const W = box.W;
 const input = JSON.parse(fs.readFileSync(0, "utf8"));
 const out = input.questions.map((q) => {
@@ -77,7 +78,13 @@ vm.runInContext(
   normalBox
 );
 const normal = input.normal.map((q) => ({ sentence: rag.isSentence(q), exact: normalBox.localHits(q).map((r) => r.url) }));
-process.stdout.write(JSON.stringify({ out, next, numbers, normal }));
+const sent = {
+  model: W.MODEL,
+  pricing: read("pricing.json").model,
+  agent: W.geminiPayload("質問", W.AGENT_SCHEMA, 1024),
+  match: W.geminiPayload("質問", W.MATCH_SCHEMA, 1024),
+};
+process.stdout.write(JSON.stringify({ out, next, numbers, normal, sent }));
 """
 
 NEXT_CASES = [
@@ -146,9 +153,19 @@ def main():
         if py != other:
             bad += 1
             print(f"通常検索に差あり: {text}")
-    total = len(questions) + len(NEXT_CASES) + len(NUMBERS) + len(normal)
+    sent = {
+        "model": MODEL,
+        "pricing": MODEL,
+        "agent": gemini_payload("質問", AGENT_SCHEMA, 1024),
+        "match": gemini_payload("質問", MATCH_SCHEMA, 1024),
+    }
+    for name, value in sent.items():
+        if value != js["sent"][name]:
+            bad += 1
+            print(f"Gemini に送る中身に差あり: {name}")
+    total = len(sent) + len(questions) + len(NEXT_CASES) + len(NUMBERS) + len(normal)
     print(
-        f"{total} 件中 {total - bad} 件が一致（質問 {len(questions)}・次の一手 {len(NEXT_CASES)}・"
+        f"{total} 件中 {total - bad} 件が一致（送る中身 {len(sent)}・質問 {len(questions)}・次の一手 {len(NEXT_CASES)}・"
         f"図表番号 {len(NUMBERS)}・通常検索 {len(normal)}）"
     )
     sys.exit(1 if bad else 0)

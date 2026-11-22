@@ -1,8 +1,11 @@
 {
-  "_説明": "記録の「費用の目安（円）」の計算に使う。単価は 100万 token あたりの米ドル。モデルや単価が変わったらここを直す。",
-  "model": "gemini-2.5-flash",
-  "input_usd_per_million": 0.30,
-  "output_usd_per_million": 2.50,
+  "_説明": "記録の「費用の目安（円）」の計算に使う。単価は 100万 token あたりの米ドル（有料枠の標準料金）。出力の単価は「出力＋思考」の token に掛ける。期間は検索した端末の日付で選ぶ。無料枠のキーなら実際の請求は 0 円。モデルや単価が変わったらここを直す。",
+  "model": "gemini-3.8-flash",
+  "periods": [
+    { "名前": "導入価格", "from": null, "until": "2026-12-31", "input_usd_per_million": 0.75, "output_usd_per_million": 3.75 },
+    { "名前": "通常価格", "from": "2027-01-01", "until": null, "input_usd_per_million": 1.50, "output_usd_per_million": 7.50 }
+  ],
   "jpy_per_usd": 150,
-  "as_of": "2026-11"
+  "source_url": "https://ai.google.dev/gemini-api/docs/pricing",
+  "checked_at": "2026-11-22"
 }
