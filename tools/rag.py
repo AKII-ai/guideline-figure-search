@@ -460,6 +460,7 @@ def gemini_payload(prompt, schema, max_tokens):
     """Gemini に送る中身。worker.js の geminiPayload と同じ。temperature は 3.6 以降無視されるので送らない。"""
     return {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "store": False,  # Gemini API のログに質問を残さない
         "generationConfig": {
             "maxOutputTokens": max_tokens,
             "thinkingConfig": {"thinkingLevel": THINKING_LEVEL},

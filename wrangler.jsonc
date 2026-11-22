@@ -1,0 +1,22 @@
+// 中継（proxy/worker.js）の設定。キーや ID は書かない（秘密は wrangler secret put）。
+// デプロイ：このフォルダで  npx wrangler deploy
+{
+  "name": "guideline-figure-search",
+  "main": "proxy/worker.js",
+  "compatibility_date": "2026-09-22",
+  "keep_vars": true,
+  "workers_dev": true,
+  // 版ごとの URL（Version URL）を、過去の版の分もまとめて止める。残すと回数制限の無い中継が使えてしまう
+  "preview_urls": false,
+  // 質問文を Cloudflare に残さない：ログ・トレースの保存、外への転送をすべて切る
+  "observability": {
+    "enabled": false,
+    "logs": { "enabled": false, "invocation_logs": false },
+    "traces": { "enabled": false }
+  },
+  "logpush": false,
+  "tail_consumers": [],
+  // 回数制限の数え場所（無料枠で使える SQLite 型）
+  "durable_objects": { "bindings": [{ "name": "RATE_LIMIT", "class_name": "RateLimit" }] },
+  "exports": { "RateLimit": { "type": "durable-object", "storage": "sqlite" } }
+}

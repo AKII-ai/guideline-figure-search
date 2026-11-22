@@ -1,6 +1,8 @@
 // Cloudflare Workers に置く中継。
 // Gemini のキーは秘密 GEMINI_API_KEY、Notion のトークンは秘密 NOTION_TOKEN にだけ入れる。
-// このファイルと GitHub にはキーを書かない。
+// 検索の記録用は別の秘密：NOTION_LOG_TOKEN（追加と更新だけ。読む権限なし）と NOTION_LOG_DB（保存先の ID）。
+// このファイルと GitHub にはキーを書かない。質問文・送信元を console に書かない（Cloudflare のログに残さない）。
+// 設定（回数制限の置き場所・ログなし・プレビュー URL なし）はリポジトリ直下の wrangler.jsonc。
 
 const FIGURES_URL = "https://akii-ai.github.io/guideline-figure-search/data/figures.json";
 // モデルは固定する（-latest は知らないうちに入れ替わる）。変えたら tools/rag.py と data/pricing.json も直す
@@ -11,6 +13,11 @@ const ALLOWED = new Set([
   "http://127.0.0.1:8765",
   "http://localhost:8765",
 ]);
+
+// 回数制限。1回 = 検索1回（同じ検索の探し直しと記録は、合わせて1回に数える）
+const PER_MINUTE = 30; // 同じ送信元から
+const PER_DAY = 500; // 全体で。日本時間の0時に戻る
+const EDITS_PER_RECORD = 30; // 1行の記録を直せる回数（評価・開いた図表）
 
 let figuresCache = null;
 let figuresAt = 0;
@@ -36,6 +43,9 @@ export default {
     }
     if (request.method !== "POST") {
       return withCors(json({ error: "検索は POST で送ってください。" }, 405), origin);
+    }
+    if (url.pathname === "/log") {
+      return withCors(await saveLog(request, env, origin), origin);
     }
     const apiKey = String(env.GEMINI_API_KEY || "").trim();
     if (!apiKey) {
@@ -69,6 +79,8 @@ export default {
           const previous = cleanPrevious(payload.previous, figures);
           const prompt = buildAgentPrompt(query, passages, rows, attempt, allowClarify, previous.map((p) => p.number));
           const schema = attempt === 1 ? AGENT_SCHEMA : MATCH_SCHEMA;
+          const stopped = await checkLimit(request, env, attempt === 1 ? "ai1" : "ai2", payload.sid);
+          if (stopped) return withCors(stopped, origin);
           const { text, usage } = await callGemini(prompt, schema, apiKey, 1024);
           const parsed = parseJson(text);
           const matches = pickRagMatches(parsed, rows, passages, previous);
@@ -77,6 +89,8 @@ export default {
         if (!rows.length) {
           return withCors(json({ matches: [] }), origin);
         }
+        const stopped = await checkLimit(request, env, "ai1", payload.sid);
+        if (stopped) return withCors(stopped, origin);
         const { text, usage } = await callGemini(buildPrompt(query, passages, rows), MATCH_SCHEMA, apiKey, 1024);
         return withCors(json({ matches: pickRagMatches(parseJson(text), rows, passages), usage }), origin);
       }
@@ -85,6 +99,8 @@ export default {
       if (!listed) {
         return withCors(json({ matches: [] }), origin);
       }
+      const stopped = await checkLimit(request, env, "ai1", payload.sid);
+      if (stopped) return withCors(stopped, origin);
       const text = await askGemini(query, listed, apiKey);
       const matches = pickMatches(text, figures, allowed);
       return withCors(json({ matches }), origin);
@@ -273,6 +289,7 @@ async function askGemini(query, listed, apiKey) {
 function geminiPayload(prompt, schema, maxTokens) {
   return {
     contents: [{ role: "user", parts: [{ text: prompt }] }],
+    store: false, // Gemini API のログに質問を残さない
     generationConfig: {
       maxOutputTokens: maxTokens,
       thinkingConfig: { thinkingLevel: THINKING_LEVEL },
@@ -517,6 +534,216 @@ function cleanNext(parsed, attempt, allowClarify) {
     return { status, standards: { substance: clip(parsed.substance, 30), medium: clip(parsed.medium, 20) } };
   }
   return { status: "ok" };
+}
+
+// ---------- 回数制限 ----------
+// 数は Durable Object 1つで数える（中継が何台に分かれても同じ数になる）。
+// 残すのは回数と、元に戻せない形にした送信元・検索 ID だけ。質問文は渡さない。日が変わったら全部消す。
+export class RateLimit {
+  constructor(ctx) {
+    this.storage = ctx.storage;
+  }
+
+  async fetch(request) {
+    const { kind, source, id } = await request.json();
+    const now = Date.now();
+    const day = new Date(now + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    let total = await this.storage.get("total");
+    if (!total || total.day !== day) {
+      await this.storage.deleteAll();
+      total = { day, count: 0 };
+      await this.storage.put("total", total);
+    }
+    if (kind === "edit") {
+      const edits = (await this.storage.get(`e:${id}`)) || 0;
+      if (edits >= EDITS_PER_RECORD) return json({ stop: "repeat" });
+      await this.storage.put(`e:${id}`, edits + 1);
+      return json({});
+    }
+    const key = `s:${source}:${id}`;
+    const used = id ? await this.storage.get(key) : null;
+    if (used) {
+      // 数え済みの検索。1回目・2回目・記録のそれぞれ1度ずつだけ通す
+      if (used.includes(kind)) return json({ stop: "repeat" });
+      await this.storage.put(key, [...used, kind]);
+      return json({});
+    }
+    if (total.count >= PER_DAY) return json({ stop: "day" });
+    const recent = ((await this.storage.get(`m:${source}`)) || []).filter((at) => at > now - 60000);
+    if (recent.length >= PER_MINUTE) return json({ stop: "minute" });
+    await this.storage.put(`m:${source}`, [...recent, now]);
+    await this.storage.put("total", { day, count: total.count + 1 });
+    if (id) await this.storage.put(key, [kind]);
+    return json({});
+  }
+}
+
+// IPv6 は1人が末尾を変え放題なので、前半（/64）でまとめる
+function sourceNetwork(ip) {
+  if (!ip.includes(":") || ip.includes(".")) return ip;
+  const [head, tail] = ip.split("::");
+  const front = head ? head.split(":") : [];
+  const back = tail ? tail.split(":") : [];
+  const zeros = ip.includes("::") ? Array(Math.max(0, 8 - front.length - back.length)).fill("0") : [];
+  return [...front, ...zeros, ...back].slice(0, 4).map((part) => parseInt(part, 16).toString(16)).join(":");
+}
+
+// 通してよければ null、止めるなら返す応答。数えられないときも止める（制限なしで動かさない）
+async function checkLimit(request, env, kind, rawId) {
+  const messages = {
+    minute: `回数制限（1分に${PER_MINUTE}回）に達したため、AI検索と記録を止めています。少し待ってからお試しください。`,
+    day: `今日の回数制限（全体で${PER_DAY}回）に達したため、AI検索と記録を止めています。日本時間の0時に戻ります。`,
+    repeat: "同じ検索の受付回数を超えたため止めました。",
+    down: "回数を確かめられないため、AI検索と記録を止めています。",
+  };
+  let stop;
+  try {
+    const id = /^[0-9a-f]{12,32}$/.test(String(rawId || "")) ? String(rawId) : "";
+    const network = sourceNetwork(request.headers.get("CF-Connecting-IP") || "unknown");
+    const secret = String(env.GEMINI_API_KEY || env.NOTION_LOG_TOKEN);
+    const mac = await crypto.subtle.sign("HMAC", await logKey(secret), new TextEncoder().encode(network));
+    const source = [...new Uint8Array(mac).slice(0, 8)].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const counter = env.RATE_LIMIT.get(env.RATE_LIMIT.idFromName("all"));
+    const response = await counter.fetch("https://limit/", { method: "POST", body: JSON.stringify({ kind, source, id }) });
+    if (!response.ok) throw new Error("limit");
+    stop = (await response.json()).stop;
+  } catch {
+    stop = "down";
+  }
+  if (!stop) return null;
+  return json({ error: messages[stop], limited: stop }, stop === "down" ? 503 : 429);
+}
+
+// ---------- 試験評価の記録を Notion に保存する ----------
+// 受けるのは2つだけ：{ record }（1行足す）と { handle, patch }（その行の4列だけ直す）。読み出しの口は作らない。
+// handle は中継が署名したページ ID。ほかの人の行や、ほかのページは直せない。
+const LOG_ORIGIN = "https://akii-ai.github.io"; // 手元のテストの検索は保存しない
+const LOG_BODY_MAX = 6000;
+// [記録の項目, Notion の列, 長さの上限]
+const LOG_TEXTS = [
+  ["time", "日時", 19],
+  ["device", "端末ID", 12],
+  ["participant", "参加者番号", 12], // 番号が正しいかは確かめない（長さだけ）
+  ["mode", "検索モード", 10],
+  ["engine", "使った検索", 20],
+  ["reason", "切り替えの理由", 40],
+  ["flow", "AIの動き", 60],
+  ["model", "モデル名", 80],
+  ["shown", "表示した図表番号（上位5件）", 200],
+  ["opened", "Notionで開いた図表番号", 400],
+];
+// [記録の項目, Notion の列, 値の上限]
+const LOG_NUMBERS = [
+  ["seq", "検索の通し番号", 1e7],
+  ["parent", "もとの検索", 1e7],
+  ["calls", "AIの呼び出し回数", 2],
+  ["prompt", "入力token", 1e6],
+  ["output", "出力token", 1e6],
+  ["thoughts", "思考token", 1e6],
+  ["cost", "費用の目安（円）", 1e4],
+  ["seconds", "最初の結果が出るまでの時間（秒）", 3600],
+];
+const LOG_FEEDBACK = ["未評価", "役立った", "違った"];
+const LOG_EDITABLE = ["flow", "shown", "opened", "feedback"];
+const LOG_QUESTION_MAX = 300;
+
+function logProperties(raw) {
+  const out = {};
+  for (const [key, column, max] of LOG_TEXTS) {
+    if (!(key in raw)) continue;
+    const content = clip(raw[key], max);
+    out[column] = { rich_text: content ? [{ type: "text", text: { content } }] : [] };
+  }
+  for (const [key, column, max] of LOG_NUMBERS) {
+    if (!(key in raw)) continue;
+    const value = raw[key] === "" || raw[key] === null ? NaN : Number(raw[key]);
+    out[column] = { number: value >= 0 && value <= max ? value : null };
+  }
+  if ("feedback" in raw) {
+    out["評価"] = { select: { name: LOG_FEEDBACK.includes(raw.feedback) ? raw.feedback : "未評価" } };
+  }
+  return out;
+}
+
+async function logKey(token) {
+  return crypto.subtle.importKey("raw", new TextEncoder().encode(token), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
+}
+
+async function signHandle(id, token) {
+  const mac = await crypto.subtle.sign("HMAC", await logKey(token), new TextEncoder().encode(id));
+  return `${id}.${[...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
+
+async function openHandle(handle, token) {
+  const found = /^([0-9a-f]{32})\.([0-9a-f]{64})$/.exec(String(handle || ""));
+  if (!found) return "";
+  const mac = new Uint8Array(found[2].match(/../g).map((h) => parseInt(h, 16)));
+  const valid = await crypto.subtle.verify("HMAC", await logKey(token), mac, new TextEncoder().encode(found[1]));
+  return valid ? found[1] : "";
+}
+
+async function saveLog(request, env, origin) {
+  if (origin !== LOG_ORIGIN) return json({ error: "記録は公開サイトからだけ受け取ります。" }, 403);
+  const token = cleanToken(env.NOTION_LOG_TOKEN || "");
+  const database = String(env.NOTION_LOG_DB || "").replace(/-/g, "").trim();
+  if (!token || !database) return json({ error: "記録の保存先がまだ設定されていません。" }, 503);
+  try {
+    const raw = await request.text();
+    if (raw.length > LOG_BODY_MAX) return json({ error: "記録が大きすぎます。" }, 413);
+    let body;
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      body = null;
+    }
+    if (!body || typeof body !== "object") return json({ error: "記録を読み取れませんでした。" }, 400);
+    let path;
+    let method;
+    let payload;
+    let stopped;
+    if ("handle" in body) {
+      const id = await openHandle(body.handle, token);
+      if (!id) return json({ error: "この記録は直せません。" }, 403);
+      const patch = {};
+      for (const key of LOG_EDITABLE) {
+        if (typeof body.patch?.[key] === "string") patch[key] = body.patch[key];
+      }
+      if (!Object.keys(patch).length) return json({ error: "直す項目がありません。" }, 400);
+      stopped = await checkLimit(request, env, "edit", id);
+      [method, path, payload] = ["PATCH", `pages/${hyphenate(id)}`, { properties: logProperties(patch) }];
+    } else {
+      const record = body.record;
+      if (!record || typeof record !== "object") return json({ error: "記録がありません。" }, 400);
+      const question = clip(record.query, LOG_QUESTION_MAX);
+      if (!question || !/^[0-9a-f]{12}$/.test(String(record.device || ""))) return json({ error: "記録の形が違います。" }, 400);
+      const properties = logProperties({ ...record, feedback: record.feedback || "未評価" });
+      properties["質問"] = { title: [{ type: "text", text: { content: question } }] };
+      stopped = await checkLimit(request, env, "log", record.sid);
+      [method, path, payload] = ["POST", "pages", { parent: { database_id: database }, properties }];
+    }
+    if (stopped) return stopped;
+    let response;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      response = await fetch(`https://api.notion.com/v1/${path}`, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, "Notion-Version": "2022-06-28", "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (attempt === 2 || (response.status !== 429 && response.status !== 529)) break;
+      const wait = Math.min(Number(response.headers.get("Retry-After")) || 1, 5);
+      await new Promise((resolve) => setTimeout(resolve, wait * 1000));
+    }
+    if (!response.ok) {
+      // Notion の返事には保存先の ID などが入るので、そのまま返さない
+      const busy = response.status === 429 || response.status === 529;
+      return json({ error: "記録を保存できませんでした。", notion: response.status }, busy ? 429 : 502);
+    }
+    if (method === "PATCH") return json({ ok: true });
+    const page = await response.json();
+    return json({ handle: await signHandle(String(page.id).replace(/-/g, ""), token) });
+  } catch {
+    return json({ error: "記録を保存できませんでした。" }, 502);
+  }
 }
 
 function visibleText(data) {

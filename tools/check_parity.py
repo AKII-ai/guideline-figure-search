@@ -33,7 +33,7 @@ const read = (name) => JSON.parse(fs.readFileSync(path.join(root, "data", name),
 const figures = read("figures.json");
 const guide = new rag.Guideline(read("chunks.json"), figures, read("synonyms.json"));
 // worker.js は ES module。export を外して関数だけ取り出す
-const src = fs.readFileSync(path.join(root, "proxy", "worker.js"), "utf8").replace("export default {", "const __worker = {");
+const src = fs.readFileSync(path.join(root, "proxy", "worker.js"), "utf8").replace("export default {", "const __worker = {").replace("export class ", "class ");
 const box = { console, URL, Response: function () {}, Headers: function () {} };
 vm.createContext(box);
 vm.runInContext(src + "\n;this.W = { cleanRequest, buildAgentPrompt, cleanNext, cleanPrevious, MODEL, geminiPayload, AGENT_SCHEMA, MATCH_SCHEMA };", box);
