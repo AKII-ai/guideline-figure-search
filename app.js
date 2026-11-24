@@ -219,7 +219,7 @@ resultsEl.addEventListener("click", async (event) => {
     recordOpened(opened.dataset.open, opened.dataset.side);
     return;
   }
-  const tab = event.target.closest("[data-tab]");
+  const tab = event.target.closest("button[data-tab]");
   if (tab) {
     showCompareTab(tab.dataset.tab);
     return;
@@ -996,7 +996,7 @@ function renderCompare(tokens) {
 
   resultsEl.innerHTML = `${passagesHtml(tokens, true)}
     <div class="compare-tabs" role="tablist" aria-label="結果の切り替え">${tab("bm25", "本文検索", `${left.length}件`)}${tab("ai", "AI検索", rightCount)}</div>
-    <div class="compare" data-tab="${state.compareTab}">
+    <div class="compare" data-show="${state.compareTab}">
       <section class="col col-bm25" aria-label="本文検索（AIなし）">
         <h2 class="col-head"><span class="col-title">本文検索</span><span class="col-sub">AIなし・言葉の重なりで順位</span><span class="col-count">${left.length}件</span></h2>
         ${bm25Body}
@@ -1036,8 +1036,8 @@ function cardsHtml(rows, side, other, tokens) {
 function showCompareTab(side) {
   state.compareTab = side === "ai" ? "ai" : "bm25";
   const box = resultsEl.querySelector(".compare");
-  if (box) box.dataset.tab = state.compareTab;
-  for (const button of resultsEl.querySelectorAll("[data-tab]")) {
+  if (box) box.dataset.show = state.compareTab;
+  for (const button of resultsEl.querySelectorAll("button[data-tab]")) {
     button.setAttribute("aria-selected", String(button.dataset.tab === state.compareTab));
   }
 }

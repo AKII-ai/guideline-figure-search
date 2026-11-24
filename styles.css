@@ -555,8 +555,8 @@ details.passages[open] summary { margin-bottom: 6px; }
 .compare-tabs .tab-ai[aria-selected="true"] { background: var(--ai); border-color: var(--ai); color: #fff; }
 
 /* 狭い画面：タブで1列ずつ */
-.compare[data-tab="bm25"] .col-ai,
-.compare[data-tab="ai"] .col-bm25 { display: none; }
+.compare[data-show="bm25"] .col-ai,
+.compare[data-show="ai"] .col-bm25 { display: none; }
 
 .col {
   border: 1px solid var(--line);
@@ -673,6 +673,6 @@ details.passages[open] summary { margin-bottom: 6px; }
     align-items: start;
   }
 
-  .compare[data-tab] .col-ai,
-  .compare[data-tab] .col-bm25 { display: block; }
+  .compare[data-show] .col-ai,
+  .compare[data-show] .col-bm25 { display: block; }
 }
