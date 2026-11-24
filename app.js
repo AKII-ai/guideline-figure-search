@@ -18,6 +18,8 @@ const state = {
   record: null, // 試験評価の記録（いまの検索だけ。端末には残さない）
   normal: null, // 通常検索で使った検索 { engine: "exact" | "bm25", reason }
   pricing: null, // data/pricing.json（費用の目安）
+  bm25Hits: null, // AI検索ボタン：左に並べる本文BM25の結果（AI なし）。null なら比べない
+  compareTab: "bm25", // 幅の狭い画面で見ている列（"bm25" | "ai"）
 };
 
 const qInput = document.getElementById("q");
@@ -52,9 +54,17 @@ rateEl.className = "rate";
 rateEl.hidden = true;
 rateEl.setAttribute("role", "dialog");
 rateEl.setAttribute("aria-labelledby", "rate-text");
-rateEl.innerHTML = `<div class="rate-box"><p id="rate-text" tabindex="-1"></p><div class="feedback">` +
-  ["役立った", "違った", "よくわからない"].map((label) => `<button type="button" data-feedback="${label}">${label}</button>`).join("") +
-  `<button type="button" class="rate-back" data-rate-back hidden>結果に戻る</button></div></div>`;
+rateEl.innerHTML = `<div class="rate-box"><p id="rate-text" tabindex="-1"></p><div class="feedback"></div>` +
+  `<button type="button" class="rate-back" data-rate-back hidden>結果に戻る</button></div>`;
+// 評価のボタン（通常）と、比べる画面のボタン（どちらがよかったか）
+const FEEDBACK_HTML = ["役立った", "違った", "よくわからない"]
+  .map((label) => `<button type="button" data-feedback="${label}">${label}</button>`).join("");
+const COMPARE_HTML = [
+  ["本文検索", "◀ 本文検索", "pick-bm25"],
+  ["同じくらい", "同じくらい", ""],
+  ["AI検索", "AI検索 ▶", "pick-ai"],
+  ["どちらもだめ", "どちらもだめ", "pick-none"],
+].map(([value, label, cls]) => `<button type="button" data-compare="${value}" class="${cls}">${label}</button>`).join("");
 document.body.appendChild(rateEl);
 const logWarn = document.createElement("p");
 logWarn.className = "log-warn";
@@ -65,6 +75,7 @@ let accepted = !NOTION_LOG; // Notion に送らない環境（手元）では説
 const EXPERIENCES = ["3年未満", "3〜10年", "10年以上"];
 let experience = ""; // 実務経験（開くたびに説明の画面で選ぶ。端末には残さない）
 const NORMAL_BM25_LIMIT = 15; // 通常検索で本文から探したときに出す図表の数
+const COMPARE_BM25_LIMIT = 8; // 比べる画面の左（本文BM25）に出す図表の数
 
 examplesEl.innerHTML = EXAMPLES.map(
   (text) => `<button type="button" data-example="${escapeHtml(text)}">${escapeHtml(text)}</button>`
@@ -205,7 +216,12 @@ chapterSelect.addEventListener("change", () => {
 resultsEl.addEventListener("click", async (event) => {
   const opened = event.target.closest("[data-open]");
   if (opened) {
-    recordOpened(opened.dataset.open);
+    recordOpened(opened.dataset.open, opened.dataset.side);
+    return;
+  }
+  const tab = event.target.closest("[data-tab]");
+  if (tab) {
+    showCompareTab(tab.dataset.tab);
     return;
   }
   const switcher = event.target.closest("[data-switch]");
@@ -257,7 +273,7 @@ resultsEl.addEventListener("click", async (event) => {
 // 中クリックで Notion を開いたときも記録する
 resultsEl.addEventListener("auxclick", (event) => {
   const opened = event.target.closest("[data-open]");
-  if (opened && event.button === 1) recordOpened(opened.dataset.open);
+  if (opened && event.button === 1) recordOpened(opened.dataset.open, opened.dataset.side);
 });
 
 // 「戻る」で前の画面のまま戻ったときも、説明から始めて結果を残さない
@@ -319,6 +335,7 @@ function resetAgent() {
   state.retried = "";
   state.standards = null;
   state.agentNote = "";
+  state.bm25Hits = null;
   remember(null);
 }
 
@@ -352,6 +369,8 @@ async function search(options = {}) {
   }
   const seq = ++searchSeq;
   if (state.controller) state.controller.abort();
+  state.bm25Hits = null;
+  state.compareTab = "bm25";
   const elapsed = () => Math.round(performance.now() - started) / 1000;
   if (state.mode !== "ai" || !aiOn) {
     await normalSearch(query, seq, options, elapsed);
@@ -392,6 +411,8 @@ async function search(options = {}) {
     if (seq !== searchSeq) return;
     req = guide.request(query, state.kind, state.chapter);
     state.passages = req.hits.slice(0, 3).map(([, chunk]) => guide.passage(chunk, query));
+    // 左の列：本文BM25（AI なし）。AI を待たずに出す
+    state.bm25Hits = bm25Rows(guide, req, query, COMPARE_BM25_LIMIT);
     render();
   } catch (error) {
     if (seq !== searchSeq) return;
@@ -442,6 +463,7 @@ async function search(options = {}) {
     return data;
   };
   let firstHits = null;
+  let aiFailed = false;
   try {
     // 2) 1回目：図表選びと次の一手（ok / clarify / retry / standards）を同時に答えさせる
     const first = await ask(req, 1, { allowClarify: !options.clarified });
@@ -475,31 +497,26 @@ async function search(options = {}) {
     }
   } catch (error) {
     if (error.name === "AbortError" || seq !== searchSeq) return;
-    if (firstHits) {
-      // 2回目だけ失敗したときは、1回目の結果を出す
-      state.hits = firstHits;
-    } else {
-      // Gemini が使えないときは、本文検索だけの順位を出す
-      state.hits = req.ranked.slice(0, 8).map(([row, , chunk]) => ({
-        ...row,
-        reason: "",
-        basis: chunk ? guide.passage(chunk, query) : null,
-      }));
-    }
+    // 2回目だけ失敗したときは、1回目の結果を出す。
+    // 1回目から失敗したら、右の列に知らせだけ出す（比べられないので、どちらがよかったかは聞かない）
+    state.hits = firstHits;
+    aiFailed = !firstHits;
     const message = error.message === "Failed to fetch" ? "Gemini に接続できませんでした。" : (error.message || "検索に失敗しました。");
-    state.error = firstHits ? `${message} 1回目の結果を表示しています。` : `${message} 本文検索だけの結果を表示しています。`;
+    state.error = firstHits ? `${message} 1回目の結果を表示しています。` : `${message} AI の結果は出せませんでした。左の本文検索の結果をご覧ください。`;
     flow.push("error");
   } finally {
     if (seq === searchSeq) {
       state.loading = false;
       remember(addRecord({
         query,
-        mode: "AI",
-        engine: "AI",
+        mode: "比較",
+        engine: "本文BM25＋AI",
         reason: "",
         parent: options.parent,
         sid: options.sid,
         send: !limited, // 回数制限で止まった検索は Notion に送らない（評価も求めない）
+        rateable: !limited && !aiFailed,
+        compare: state.bm25Hits || [],
         flow: flow.join(" → "),
         calls: usage.calls,
         prompt: usage.prompt,
@@ -548,11 +565,7 @@ async function normalSearch(query, seq, options, elapsed) {
     if (seq !== searchSeq) return;
     const req = guide.request(query, state.kind, state.chapter);
     state.passages = req.hits.slice(0, 3).map(([, chunk]) => guide.passage(chunk, query));
-    state.hits = req.ranked.slice(0, NORMAL_BM25_LIMIT).map(([row, , chunk]) => ({
-      ...row,
-      reason: "",
-      basis: chunk ? guide.passage(chunk, query) : null,
-    }));
+    state.hits = bm25Rows(guide, req, query, NORMAL_BM25_LIMIT);
     state.loading = false;
   }
   state.normal = { engine, reason };
@@ -568,6 +581,15 @@ async function normalSearch(query, seq, options, elapsed) {
     seconds: elapsed(),
   }));
   render();
+}
+
+// 本文BM25 の図表の順位（AI なし）。通常検索と、比べる画面の左の列で使う
+function bm25Rows(guide, req, query, limit) {
+  return req.ranked.slice(0, limit).map(([row, , chunk]) => ({
+    ...row,
+    reason: "",
+    basis: chunk ? guide.passage(chunk, query) : null,
+  }));
 }
 
 // 「本文からも探す」「完全一致に戻す」：同じ言葉で検索をやり直す（新しい行として記録する）
@@ -696,7 +718,8 @@ function remember(record) {
   state.record = record;
 }
 
-function addRecord({ sid, send = true, query, mode, engine, reason, parent, flow, calls = 0, prompt = 0, output = 0, thoughts = 0, model = "", shown, seconds }) {
+// compare：比べる画面の左（本文BM25）の結果。渡したら「比較」（どちらがよかったか）を聞く行にする
+function addRecord({ sid, send = true, rateable = send, compare = null, query, mode, engine, reason, parent, flow, calls = 0, prompt = 0, output = 0, thoughts = 0, model = "", shown, seconds }) {
   const record = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     time: localTime(new Date()),
@@ -720,9 +743,13 @@ function addRecord({ sid, send = true, query, mode, engine, reason, parent, flow
     feedback: "",
     seconds,
   };
+  if (compare) {
+    record.compare = "未回答";
+    record.bm25 = shownNumbers(compare);
+  }
   if (send) sendRecord(record);
-  // 保存を止めた検索には、評価を求めない
-  return { ...record, rateable: send };
+  // 保存を止めた検索・AI が答えられなかった比較には、評価を求めない
+  return { ...record, rateable };
 }
 
 // Notion に送る。送れなくても検索は止めない（端末に控えが無いので、画面で知らせる）。
@@ -790,8 +817,14 @@ function costYen({ time, model, prompt, output, thoughts }) {
 // ---------- 評価のポップアップ ----------
 // 結果が出たら画面下に出す（結果は見られる）。未評価で次へ進もうとしたら中央に出して止める。
 // 評価したら結果を消して、止めていた操作を続ける。
+function isCompareRecord() {
+  return Boolean(state.record && "compare" in state.record);
+}
+
 function needsRating() {
-  return Boolean(state.record?.rateable && !state.record.feedback && !state.loading && !state.clarify);
+  const record = state.record;
+  if (!record?.rateable || state.loading || state.clarify) return false;
+  return isCompareRecord() ? record.compare === "未回答" : !record.feedback;
 }
 
 function afterRating(action) {
@@ -812,7 +845,17 @@ function renderRating() {
   rateEl.hidden = !shown;
   rateEl.classList.toggle("is-blocking", blocking);
   rateEl.setAttribute("aria-modal", String(blocking));
-  rateEl.querySelector("#rate-text").textContent = blocking ? "先に、この検索の評価をお願いします" : "この結果は役に立ちましたか";
+  const compare = isCompareRecord();
+  const choices = rateEl.querySelector(".feedback");
+  const kind = compare ? "compare" : "feedback";
+  if (choices.dataset.kind !== kind) {
+    choices.dataset.kind = kind;
+    choices.innerHTML = compare ? COMPARE_HTML : FEEDBACK_HTML;
+  }
+  rateEl.classList.toggle("is-compare", compare);
+  rateEl.querySelector("#rate-text").textContent = blocking
+    ? (compare ? "先に、どちらの結果がよかったかを選んでください" : "先に、この検索の評価をお願いします")
+    : (compare ? "どちらの結果がよかったですか" : "この結果は役に立ちましたか");
   rateEl.querySelector("[data-rate-back]").hidden = !blocking;
   document.body.classList.toggle("has-rate", shown);
   // 説明を出している間は、後ろの操作止めに手を触れない
@@ -821,17 +864,17 @@ function renderRating() {
   }
 }
 
-function rate(feedback) {
+function rate(patch, label) {
   if (!needsRating()) return;
   const action = afterRate;
-  updateRecord({ feedback });
+  updateRecord(patch);
   // 検索語と結果は画面に残す（端末には保存しない。再読み込みで消える）
   renderRating();
   if (action) {
     action();
     return;
   }
-  statusEl.textContent = `評価を受け付けました（${feedback}）。結果はこのまま見られます。次の検索もできます。`;
+  statusEl.textContent = `評価を受け付けました（${label}）。結果はこのまま見られます。次の検索もできます。`;
 }
 
 function backToResults() {
@@ -841,7 +884,9 @@ function backToResults() {
 
 rateEl.addEventListener("click", (event) => {
   const button = event.target.closest("[data-feedback]");
-  if (button) rate(button.dataset.feedback);
+  const picked = event.target.closest("[data-compare]");
+  if (button) rate({ feedback: button.dataset.feedback }, button.dataset.feedback);
+  else if (picked) rate({ compare: picked.dataset.compare }, picked.dataset.compare);
   else if (event.target.closest("[data-rate-back]")) backToResults();
 });
 document.addEventListener("keydown", (event) => {
@@ -849,11 +894,13 @@ document.addEventListener("keydown", (event) => {
 });
 
 // Notion で開いた図表番号を、その検索の行に足す
-function recordOpened(number) {
+// 比べる画面では、どちらの列から開いたかを付ける（表2.3.1-2(本文) / 表2.3.1-2(AI)）
+function recordOpened(number, side) {
   if (!number) return;
+  const entry = side ? `${number}(${side === "bm25" ? "本文" : "AI"})` : number;
   updateRecord((record) => {
     const opened = String(record.opened || "").split(" ").filter(Boolean);
-    if (!opened.includes(number)) opened.push(number);
+    if (!opened.includes(entry)) opened.push(entry);
     return { opened: opened.join(" ") };
   });
 }
@@ -920,7 +967,82 @@ function whereLabel(passage) {
   return `${number}${passage.path.slice(-2).join(" › ")}（${pageLabel(passage)}）`;
 }
 
-function passagesHtml(tokens) {
+// ---------- 比べる画面（AI検索ボタン）：左に本文BM25、右に AI ----------
+function renderCompare(tokens) {
+  const q = state.query.trim();
+  const left = state.bm25Hits.filter(passesFilter);
+  const right = state.hits ? state.hits.filter(passesFilter) : null;
+  const note = state.error && right ? ` ${state.error}` : "";
+  if (state.loading) statusEl.textContent = `「${q}」 左に本文検索の結果を出しました。右は AI が選んでいます。`;
+  else if (state.clarify) statusEl.textContent = `「${q}」 右の AI 検索が、どちらの意味か聞いています。`;
+  else if (!right) statusEl.textContent = state.error || `「${q}」`;
+  else statusEl.textContent = `「${q}」 本文検索 ${left.length}件／AI検索 ${right.length}件${note}`;
+
+  const leftSet = new Set(left.map((row) => row.number));
+  const rightSet = new Set((right || []).map((row) => row.number));
+  const rightCount = state.loading ? "…" : right ? `${right.length}件` : "—";
+  const tab = (side, label, count) =>
+    `<button type="button" role="tab" class="tab-${side}" data-tab="${side}" aria-selected="${state.compareTab === side}">${label} <span>${count}</span></button>`;
+
+  let aiBody;
+  if (state.loading) aiBody = `<p class="col-wait">AI が選んでいます…</p>`;
+  else if (state.clarify) aiBody = "";
+  else if (!right) aiBody = `<p class="col-wait">${escapeHtml(state.error || "AI の結果はありません。")}</p>`;
+  else if (!right.length) aiBody = `<p class="col-wait">ガイドラインの構成からは、合う図表を選べませんでした。</p>`;
+  else aiBody = cardsHtml(right, "ai", leftSet, tokens);
+  const bm25Body = left.length
+    ? cardsHtml(left, "bm25", rightSet, tokens)
+    : `<p class="col-wait">本文から合う図表は見つかりませんでした。</p>`;
+
+  resultsEl.innerHTML = `${passagesHtml(tokens, true)}
+    <div class="compare-tabs" role="tablist" aria-label="結果の切り替え">${tab("bm25", "本文検索", `${left.length}件`)}${tab("ai", "AI検索", rightCount)}</div>
+    <div class="compare" data-tab="${state.compareTab}">
+      <section class="col col-bm25" aria-label="本文検索（AIなし）">
+        <h2 class="col-head"><span class="col-title">本文検索</span><span class="col-sub">AIなし・言葉の重なりで順位</span><span class="col-count">${left.length}件</span></h2>
+        ${bm25Body}
+      </section>
+      <section class="col col-ai" aria-label="AI検索（Gemini）">
+        <h2 class="col-head"><span class="col-title">AI検索</span><span class="col-sub">Gemini が本文を読んで選ぶ</span><span class="col-count">${rightCount}</span></h2>
+        ${agentHtml()}${aiBody}
+      </section>
+    </div>`;
+  loadThumbs();
+}
+
+// 1列分のカード。other：もう片方の列に出た図表番号（「両方」の印）
+function cardsHtml(rows, side, other, tokens) {
+  const items = rows.map((row, i) => {
+    const where = [row.chapter, row.section, row.item || row.itemNo].filter(Boolean).join(" › ");
+    const page = row.page == null || row.page === "" ? "" : ` ・ p.${escapeHtml(String(row.page))}`;
+    return `<li class="card">
+      <div class="card-top"><span class="rank">${i + 1}</span><span class="card-num">${highlight(row.number || "—", tokens)}</span>${
+        row.number && other.has(row.number) ? `<span class="both" title="もう片方の列にも出ています">両方</span>` : ""
+      }</div>
+      <div class="card-name">${highlight(row.name || "（名称なし）", tokens)}</div>
+      ${row.reason ? `<p class="card-reason">${escapeHtml(row.reason)}</p>` : ""}
+      ${row.basis ? `<p class="card-basis">根拠：${escapeHtml(whereLabel(row.basis))}</p>` : ""}
+      <p class="card-where">${escapeHtml(where || "—")}${page}</p>
+      ${thumbFor(row)}
+      <div class="card-actions">
+        <a href="${escapeHtml(row.url)}" target="_blank" rel="noopener" data-open="${escapeHtml(row.number || "")}" data-side="${side}">Notionで開く</a>
+        <button type="button" data-copy="${escapeHtml(citation(row))}">引用をコピー</button>
+      </div>
+    </li>`;
+  }).join("");
+  return `<ol class="cards">${items}</ol>`;
+}
+
+// 幅の狭い画面のタブ。描き直さずに見せる列だけ替える（画像を読み直さない）
+function showCompareTab(side) {
+  state.compareTab = side === "ai" ? "ai" : "bm25";
+  const box = resultsEl.querySelector(".compare");
+  if (box) box.dataset.tab = state.compareTab;
+  for (const button of resultsEl.querySelectorAll("[data-tab]")) {
+    button.setAttribute("aria-selected", String(button.dataset.tab === state.compareTab));
+  }
+}
+
+function passagesHtml(tokens, collapsed = false) {
   if (!state.passages || !state.passages.length) return "";
   if (state.mode !== "ai" && state.normal?.engine !== "bm25") return "";
   const items = state.passages
@@ -929,6 +1051,9 @@ function passagesHtml(tokens) {
         `<span class="passage-quote">${highlight(`${passage.quote}…`, tokens)}</span></li>`
     )
     .join("");
+  if (collapsed) {
+    return `<details class="passages"><summary>本文の該当箇所（${state.passages.length}件）</summary><ol>${items}</ol></details>`;
+  }
   return `<section class="passages" aria-label="本文の該当箇所"><h2>本文の該当箇所</h2><ol>${items}</ol></section>`;
 }
 
@@ -939,6 +1064,10 @@ function render() {
   if (!state.query.trim()) {
     statusEl.textContent = "内容を入れて検索すると、該当する図表を表示します。";
     resultsEl.innerHTML = "";
+    return;
+  }
+  if (state.mode === "ai" && state.bm25Hits) {
+    renderCompare(tokens);
     return;
   }
   if (state.loading && state.mode !== "ai") {

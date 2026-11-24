@@ -5,6 +5,10 @@
   --bg: #fff;
   --head: #f5f5f5;
   --link: #0b57d0;
+  --bm25: #5f6368; /* 比べる画面：本文検索（AIなし） */
+  --bm25-bg: #f1f3f4;
+  --ai: #1a3d8f; /* 比べる画面：AI検索 */
+  --ai-bg: #eaf0fb;
 }
 
 * { box-sizing: border-box; }
@@ -419,10 +423,22 @@ mark { background: #fff3a0; }
   min-height: 44px;
 }
 
-.feedback .rate-back {
-  flex-basis: 100%;
+.rate-back {
+  width: 100%;
+  min-height: 40px;
+  margin-top: 6px;
+  border: 1px solid #bbb;
+  background: #fff;
   color: var(--muted);
+  font: inherit;
+  cursor: pointer;
 }
+
+/* 比べる画面のアンケート：列と同じ色 */
+.feedback .pick-bm25 { border-color: var(--bm25); color: var(--bm25); font-weight: 700; }
+.feedback .pick-ai { border-color: var(--ai); color: var(--ai); font-weight: 700; }
+.rate.is-compare .feedback button { flex: 1 1 30%; }
+.rate.is-compare .feedback .pick-none { flex-basis: 100%; min-height: 36px; color: var(--muted); }
 
 .rate.is-blocking {
   inset: 0;
@@ -508,4 +524,155 @@ body.has-rate { padding-bottom: 130px; }
 
 .first-notice {
   overflow-y: auto;
+}
+
+/* ---------- 比べる画面（AI検索ボタン）：左に本文検索、右に AI検索 ---------- */
+details.passages summary {
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+details.passages[open] summary { margin-bottom: 6px; }
+
+.compare-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 10px;
+}
+
+.compare-tabs button {
+  flex: 1;
+  min-height: 44px;
+  border: 1px solid #bbb;
+  background: #fff;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.compare-tabs .tab-bm25[aria-selected="true"] { background: var(--bm25); border-color: var(--bm25); color: #fff; }
+.compare-tabs .tab-ai[aria-selected="true"] { background: var(--ai); border-color: var(--ai); color: #fff; }
+
+/* 狭い画面：タブで1列ずつ */
+.compare[data-tab="bm25"] .col-ai,
+.compare[data-tab="ai"] .col-bm25 { display: none; }
+
+.col {
+  border: 1px solid var(--line);
+  border-top: 4px solid var(--bm25);
+  min-width: 0;
+}
+
+.col-ai { border-top-color: var(--ai); }
+
+.col-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 0;
+  padding: 8px 12px;
+  background: var(--bm25-bg);
+  font-size: 15px;
+}
+
+.col-ai .col-head { background: var(--ai-bg); }
+.col-title { font-weight: 700; color: var(--bm25); }
+.col-ai .col-title { color: var(--ai); }
+.col-sub { font-size: 12px; font-weight: 400; color: var(--muted); }
+.col-count { margin-left: auto; font-size: 13px; font-weight: 400; color: var(--muted); }
+
+.col .agent-note,
+.col .agent-box { margin: 10px 12px; }
+
+.col-wait {
+  margin: 0;
+  padding: 16px 12px;
+  color: var(--muted);
+}
+
+.cards {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  padding: 10px 12px 10px 14px;
+  border-top: 1px solid var(--line);
+  border-left: 3px solid var(--bm25);
+}
+
+.col-ai .card { border-left-color: var(--ai); }
+.cards .card:first-child { border-top: 0; }
+
+.card-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.rank {
+  min-width: 1.6em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.card-num { font-weight: 700; }
+
+.both {
+  padding: 0 6px;
+  border: 1px solid #b7a400;
+  background: #fffbe0;
+  color: #6b5d00;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.card-name { margin-top: 2px; font-weight: 700; }
+
+.card-reason,
+.card-basis,
+.card-where {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.card-reason { font-size: 13px; color: var(--text); }
+
+.card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.card-actions a,
+.card-actions button {
+  padding: 3px 8px;
+  border: 1px solid #bbb;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.card-actions a { color: var(--link); text-decoration: none; }
+.card-actions button.is-copied { color: #0b7a2a; }
+
+/* 広い画面：左右に並べる（タブは使わない） */
+@media (min-width: 860px) {
+  .compare-tabs { display: none; }
+
+  .compare {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+
+  .compare[data-tab] .col-ai,
+  .compare[data-tab] .col-bm25 { display: block; }
 }

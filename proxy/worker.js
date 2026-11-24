@@ -640,6 +640,7 @@ const LOG_TEXTS = [
   ["flow", "AIの動き", 60],
   ["model", "モデル名", 80],
   ["shown", "表示した図表番号（上位5件）", 200],
+  ["bm25", "本文BM25の図表番号（上位5件）", 200],
   ["opened", "Notionで開いた図表番号", 400],
 ];
 // [記録の項目, Notion の列, 値の上限]
@@ -655,7 +656,9 @@ const LOG_NUMBERS = [
 ];
 const LOG_FEEDBACK = ["未評価", "役立った", "違った", "よくわからない"];
 const LOG_EXPERIENCE = ["3年未満", "3〜10年", "10年以上"];
-const LOG_EDITABLE = ["flow", "shown", "opened", "feedback"];
+// 比較（AI検索ボタン：本文BM25 と AI を左右に並べる）で、どちらがよかったか
+const LOG_COMPARE = ["未回答", "本文検索", "同じくらい", "AI検索", "どちらもだめ"];
+const LOG_EDITABLE = ["flow", "shown", "opened", "feedback", "compare"];
 const LOG_QUESTION_MAX = 300;
 
 function logProperties(raw) {
@@ -672,6 +675,9 @@ function logProperties(raw) {
   }
   if ("feedback" in raw) {
     out["評価"] = { select: { name: LOG_FEEDBACK.includes(raw.feedback) ? raw.feedback : "未評価" } };
+  }
+  if ("compare" in raw) {
+    out["比較"] = { select: { name: LOG_COMPARE.includes(raw.compare) ? raw.compare : "未回答" } };
   }
   if ("experience" in raw) {
     out["実務経験"] = { select: LOG_EXPERIENCE.includes(raw.experience) ? { name: raw.experience } : null };
@@ -730,7 +736,9 @@ async function saveLog(request, env, origin) {
       if (!record || typeof record !== "object") return json({ error: "記録がありません。" }, 400);
       const question = clip(record.query, LOG_QUESTION_MAX);
       if (!question || !/^[0-9a-f]{12}$/.test(String(record.device || ""))) return json({ error: "記録の形が違います。" }, 400);
-      const properties = logProperties({ ...record, feedback: record.feedback || "未評価" });
+      // 比較の行は「評価」を書かない（「比較」で聞く）
+      const { feedback, ...rest } = record;
+      const properties = logProperties("compare" in record ? rest : { ...rest, feedback: feedback || "未評価" });
       properties["質問"] = { title: [{ type: "text", text: { content: question } }] };
       stopped = await checkLimit(request, env, "log", record.sid);
       [method, path, payload] = ["POST", "pages", { parent: { database_id: database }, properties }];
