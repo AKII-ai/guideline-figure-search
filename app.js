@@ -62,6 +62,7 @@ logWarn.setAttribute("role", "alert");
 statusEl.before(logWarn);
 let afterRate = null; // 評価が済むまで止めている操作
 let accepted = !NOTION_LOG; // Notion に送らない環境（手元）では説明を出さない
+const EXPERIENCES = ["3年未満", "3〜10年", "10年以上"];
 let experience = ""; // 実務経験（開くたびに説明の画面で選ぶ。端末には残さない）
 const NORMAL_BM25_LIMIT = 15; // 通常検索で本文から探したときに出す図表の数
 
@@ -645,8 +646,17 @@ function startNotice() {
   const behind = document.querySelectorAll("body > header, body > main");
   behind.forEach((element) => { element.inert = true; });
   notice.hidden = false;
-  const choices = [...document.querySelectorAll('input[name="experience"]')];
   const button = document.getElementById("first-notice-ok");
+  // ブラウザに古い index.html が残っていても選べるように、無ければここで作る
+  if (!document.querySelector('input[name="experience"]')) {
+    const fieldset = document.createElement("fieldset");
+    fieldset.className = "experience-choice";
+    fieldset.innerHTML = "<legend>実務経験</legend>" + EXPERIENCES.map(
+      (value) => `<label><input type="radio" name="experience" value="${value}">${value}</label>`
+    ).join("");
+    button.before(fieldset);
+  }
+  const choices = [...document.querySelectorAll('input[name="experience"]')];
   button.disabled = true;
   for (const choice of choices) choice.addEventListener("change", () => { button.disabled = false; });
   button.addEventListener("click", () => {
