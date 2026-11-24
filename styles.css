@@ -477,6 +477,20 @@ body.has-rate { padding-bottom: 130px; }
 
 .first-notice-box p { margin: 0 0 18px; }
 
+.experience-choice {
+  margin: 0 0 18px;
+  padding: 4px 12px 8px;
+  border: 1px solid var(--line);
+}
+
+.experience-choice label {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 40px;
+  cursor: pointer;
+}
+
 .first-notice-box button {
   width: 100%;
   min-height: 44px;
@@ -485,6 +499,11 @@ body.has-rate { padding-bottom: 130px; }
   color: #fff;
   font: inherit;
   cursor: pointer;
+}
+
+.first-notice-box button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .first-notice {

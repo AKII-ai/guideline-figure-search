@@ -653,7 +653,8 @@ const LOG_NUMBERS = [
   ["cost", "費用の目安（円）", 1e4],
   ["seconds", "最初の結果が出るまでの時間（秒）", 3600],
 ];
-const LOG_FEEDBACK = ["未評価", "役立った", "違った"];
+const LOG_FEEDBACK = ["未評価", "役立った", "違った", "よくわからない"];
+const LOG_EXPERIENCE = ["3年未満", "3〜10年", "10年以上"];
 const LOG_EDITABLE = ["flow", "shown", "opened", "feedback"];
 const LOG_QUESTION_MAX = 300;
 
@@ -671,6 +672,9 @@ function logProperties(raw) {
   }
   if ("feedback" in raw) {
     out["評価"] = { select: { name: LOG_FEEDBACK.includes(raw.feedback) ? raw.feedback : "未評価" } };
+  }
+  if ("experience" in raw) {
+    out["実務経験"] = { select: LOG_EXPERIENCE.includes(raw.experience) ? { name: raw.experience } : null };
   }
   return out;
 }

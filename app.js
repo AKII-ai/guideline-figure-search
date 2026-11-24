@@ -53,7 +53,7 @@ rateEl.hidden = true;
 rateEl.setAttribute("role", "dialog");
 rateEl.setAttribute("aria-labelledby", "rate-text");
 rateEl.innerHTML = `<div class="rate-box"><p id="rate-text" tabindex="-1"></p><div class="feedback">` +
-  ["役立った", "違った"].map((label) => `<button type="button" data-feedback="${label}">${label}</button>`).join("") +
+  ["役立った", "違った", "よくわからない"].map((label) => `<button type="button" data-feedback="${label}">${label}</button>`).join("") +
   `<button type="button" class="rate-back" data-rate-back hidden>結果に戻る</button></div></div>`;
 document.body.appendChild(rateEl);
 const logWarn = document.createElement("p");
@@ -62,6 +62,7 @@ logWarn.setAttribute("role", "alert");
 statusEl.before(logWarn);
 let afterRate = null; // 評価が済むまで止めている操作
 let accepted = !NOTION_LOG; // Notion に送らない環境（手元）では説明を出さない
+let experience = ""; // 実務経験（開くたびに説明の画面で選ぶ。端末には残さない）
 const NORMAL_BM25_LIMIT = 15; // 通常検索で本文から探したときに出す図表の数
 
 examplesEl.innerHTML = EXAMPLES.map(
@@ -637,21 +638,27 @@ function randomId() {
   return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-// 開くたびに説明を出す。「わかりました」を押すまで使えない
+// 開くたびに説明を出す。実務経験を選んで「わかりました」を押すまで使えない
 function startNotice() {
   if (accepted) return;
   const notice = document.getElementById("first-notice");
   const behind = document.querySelectorAll("body > header, body > main");
   behind.forEach((element) => { element.inert = true; });
   notice.hidden = false;
+  const choices = [...document.querySelectorAll('input[name="experience"]')];
   const button = document.getElementById("first-notice-ok");
+  button.disabled = true;
+  for (const choice of choices) choice.addEventListener("change", () => { button.disabled = false; });
   button.addEventListener("click", () => {
+    const chosen = choices.find((choice) => choice.checked);
+    if (!chosen) return;
+    experience = chosen.value;
     accepted = true;
     notice.hidden = true;
     behind.forEach((element) => { element.inert = false; });
     qInput.focus();
   });
-  button.focus();
+  (choices[0] || button).focus();
 }
 
 // 端末ID：初回に作る乱数（名前や会社名は入れない）
@@ -685,6 +692,7 @@ function addRecord({ sid, send = true, query, mode, engine, reason, parent, flow
     time: localTime(new Date()),
     sid,
     device: deviceId(),
+    experience,
     seq: nextSeq(),
     parent: parent ?? "",
     mode,
