@@ -825,15 +825,13 @@ function rate(feedback) {
   if (!needsRating()) return;
   const action = afterRate;
   updateRecord({ feedback });
-  qInput.value = "";
-  clearResults();
-  window.scrollTo(0, 0);
+  // 検索語と結果は画面に残す（端末には保存しない。再読み込みで消える）
+  renderRating();
   if (action) {
     action();
     return;
   }
-  qInput.focus();
-  statusEl.textContent = "評価を受け付けました。次の検索ができます。";
+  statusEl.textContent = `評価を受け付けました（${feedback}）。結果はこのまま見られます。次の検索もできます。`;
 }
 
 function backToResults() {
