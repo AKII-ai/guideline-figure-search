@@ -342,6 +342,64 @@ mark { background: #fff3a0; }
   font-size: 13px;
 }
 
+/* ガイドラインの記載箇所（AI が章ごとに選ぶ。比べる画面の2列の上） */
+.sections {
+  margin: 0 0 16px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--ai);
+  background: var(--ai-bg);
+  padding: 10px 14px;
+}
+
+.sections h2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ai);
+}
+
+.sections-sub { font-size: 12px; font-weight: 400; color: var(--muted); }
+.sections-wait { margin: 0; font-size: 13px; color: var(--muted); }
+
+.sections ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.section {
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.section:first-child { border-top: 0; padding-top: 2px; }
+
+.section-ch {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ai);
+}
+
+.section-where {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.section-quote {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+.section-reason {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .basis {
   display: block;
   margin-top: 2px;

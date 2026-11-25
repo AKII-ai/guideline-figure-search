@@ -27,6 +27,13 @@ TOP_CHUNKS = 12  # 図表の候補を集めるチャンク数
 PROMPT_CHUNKS = 6  # Gemini に見せるチャンク数
 EXCERPT = 220  # Gemini に見せる抜粋の長さ（文字）
 CANDIDATES = 20  # Gemini に見せる図表の候補数（15 だと正解が 16〜20 位の質問を落とす）
+# 記載箇所の候補：上位 SECTION_DEPTH チャンクから、章（1〜6）ごとに項の違うものを SECTION_PER_CHAPTER 件まで
+SECTION_DEPTH = 60
+SECTION_PER_CHAPTER = 3
+SECTION_QUOTE = 120
+CHAPTERS = ("1", "2", "3", "4", "5", "6")
+SECTIONS_MAX = len(CHAPTERS) * SECTION_PER_CHAPTER
+SECTION_REASON_MAX = 40
 K1 = 1.2
 B = 0.75
 EMBED_MODEL = "gemini-embedding-001"
@@ -284,9 +291,31 @@ class Guideline:
         text = chunk["text"][start:].replace("\n", " ")
         return text[:limit]
 
+    def section_candidates(self, query, deep):
+        """記載箇所の候補（章ごと）。どの章が当てはまるか・どの項かは AI が選ぶ。付録は入れない。rag.js と同じ。"""
+        by_chapter = {ch: [] for ch in CHAPTERS}
+        for _, chunk in deep:
+            items = by_chapter.get(str(chunk.get("no") or "").split(".")[0])
+            if items is None or len(items) >= SECTION_PER_CHAPTER or any(c["no"] == chunk["no"] for c in items):
+                continue
+            items.append(chunk)
+        return [
+            {
+                "id": c["id"],
+                "ch": ch,
+                "no": c["no"],
+                "title": " › ".join(c["path"][-2:]),
+                "page": c.get("page"),
+                "quote": self.quote(c, query, SECTION_QUOTE),
+            }
+            for ch in CHAPTERS
+            for c in by_chapter[ch]
+        ]
+
     def request(self, query, kind="", chapter="", qvec=None):
         """中継に送る内容（本文の抜粋と候補の id だけ）。rag.js の request と同じ。"""
-        hits = self.search_chunks(query, qvec=qvec)
+        deep = self.search_chunks(query, SECTION_DEPTH, qvec=qvec)
+        hits = deep[:TOP_CHUNKS]
         ranked = self.rank_figures(query, kind, chapter, hits)
         passages = [
             {"id": c["id"], "no": c["no"], "title": c["path"][-1], "page": c.get("page"), "quote": self.quote(c, query)}
@@ -295,7 +324,13 @@ class Guideline:
         candidates = [
             {"id": page_id(row["url"]), "chunk": chunk["id"] if chunk else ""} for row, _, chunk in ranked[:CANDIDATES]
         ]
-        return {"hits": hits, "ranked": ranked, "passages": passages, "candidates": candidates}
+        return {
+            "hits": hits,
+            "ranked": ranked,
+            "passages": passages,
+            "candidates": candidates,
+            "sections": self.section_candidates(query, deep),
+        }
 
     def answer(self, query, passages, candidates, api_key):
         """受け取った抜粋と候補から Gemini に1回だけ選ばせる。server.py と proxy/worker.js と同じ。"""
@@ -427,6 +462,86 @@ MATCH_SCHEMA = {
     },
     "required": ["matches"],
 }
+
+# ---------- 記載箇所（章ごと）。proxy/worker.js と同じ ----------
+CHAPTER_NAMES = {
+    "1": "土壌汚染対策法の概要",
+    "2": "土壌汚染状況調査",
+    "3": "要措置区域等の指定",
+    "4": "指定の申請",
+    "5": "汚染の除去等の措置",
+    "6": "臨海部特例区域",
+}
+SECTIONS_SCHEMA = {
+    "type": "ARRAY",
+    "maxItems": len(CHAPTERS),
+    "items": {
+        "type": "OBJECT",
+        "properties": {"id": {"type": "STRING"}, "reason": {"type": "STRING"}},
+        "required": ["id", "reason"],
+    },
+}
+
+
+def clean_sections(raw):
+    """ブラウザから来た記載箇所の候補を確かめる。数と長さを制限する。worker.js の cleanSections と同じ。"""
+    out = []
+    for item in (raw if isinstance(raw, list) else [])[:SECTIONS_MAX]:
+        if not isinstance(item, dict):
+            continue
+        chunk_id = str(item.get("id") or "")
+        ch = str(item.get("ch") or "")
+        if not CHUNK_ID.match(chunk_id) or ch not in CHAPTERS or any(s["id"] == chunk_id for s in out):
+            continue
+        out.append(
+            {
+                "id": chunk_id,
+                "ch": ch,
+                "no": str(item.get("no") or "")[:20],
+                "title": str(item.get("title") or "")[:80],
+                "page": str(item.get("page") or "")[:24],
+                "quote": str(item.get("quote") or "")[:160],
+            }
+        )
+    return out
+
+
+def sections_prompt(sections):
+    """プロンプトの後ろに足す、記載箇所の候補と選び方。候補が無ければ空。"""
+    if not sections:
+        return ""
+    lines = []
+    for ch in CHAPTERS:
+        items = [s for s in sections if s["ch"] == ch]
+        if not items:
+            continue
+        lines.append(f"第{ch}章 {CHAPTER_NAMES[ch]}")
+        for s in items:
+            page = f"p.{s['page']}" if s["page"] else ""
+            lines.append(f"[{s['id']}] {s['no']} {s['title']} {page}\n{s['quote']}")
+    return (
+        "\n\n記載箇所の候補（章ごと。[チャンクid] 項番号 見出し ページ）:\n"
+        + "\n".join(lines)
+        + "\n\nsections には、質問の答えが書いてある箇所を章ごとに1件まで選ぶ。"
+        "質問に当てはまらない章は入れない（全部の章を埋めなくてよい）。"
+        "id は記載箇所の候補のチャンクid。reason は日本語で40字まで（その箇所に何が書いてあるか）。"
+    )
+
+
+def pick_sections(parsed, sections):
+    """AI が選んだ記載箇所。送った候補の id だけ通し、1章1件、章の順に並べる。worker.js の pickSections と同じ。"""
+    by_id = {s["id"]: s for s in sections}
+    out = []
+    raw = parsed.get("sections")
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        s = by_id.get(str(item.get("id") or "").strip())
+        if not s or any(by_id[o["id"]]["ch"] == s["ch"] for o in out):
+            continue
+        out.append({"id": s["id"], "reason": re.sub(r"\s+", " ", str(item.get("reason") or "")).strip()[:SECTION_REASON_MAX]})
+    out.sort(key=lambda o: by_id[o["id"]]["ch"])
+    return out
 
 
 class GeminiError(Exception):

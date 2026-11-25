@@ -82,6 +82,30 @@ def item_hit(items, passages):
     return 0
 
 
+def section_hit(items, nos):
+    """記載箇所：(当たったか, 当たった件数, 出した件数)。正解の項（items）に入ったものを当たりと数える。"""
+    good = sum(1 for no in nos if any(no == item or no.startswith(item + ".") for item in items))
+    return (1 if good else 0), good, len(nos)
+
+
+def expected_items(guide, item):
+    """正解の項。items が無い質問は、正解の図表の項番号（itemNo、無ければ sectionNo）で代える。"""
+    if item.get("items"):
+        return item["items"]
+    want = {base_number(n) for n in item["expected"]}
+    return sorted({str(r.get("itemNo") or r.get("sectionNo") or "") for r in guide.figures if base_number(r.get("number")) in want} - {""})
+
+
+def bm25_sections(guide, question):
+    """AI なしで出すなら：章ごとに BM25 の一番上の項（当てはまらない章も出てしまう）。"""
+    seen, out = set(), []
+    for s in guide.request(question)["sections"]:
+        if s["ch"] not in seen:
+            seen.add(s["ch"])
+            out.append(s["no"])
+    return out
+
+
 _agents = {}
 QUERY_CACHE = ROOT / "data" / "build" / "query_vectors.json"
 _query_cache = None
@@ -104,6 +128,7 @@ def run_method(guide, method, question, key):
     usage = None
     passages = None
     note = None  # normal_v2 で使った検索（記録の「切り替えの理由」と同じ言葉）
+    sections = None  # 記載箇所の項番号（agent_lite と bm25 だけ）
     if method in ("hybrid", "rag_hybrid"):
         qvec = query_vector(question, key)
         result = guide.search(question, api_key=key, qvec=qvec, use_llm=method == "rag_hybrid")
@@ -127,9 +152,13 @@ def run_method(guide, method, question, key):
         result = _agents[method].search(question, key)
         usage = result["usage"]
         passages = result["passages"] or None
+        by_chunk = {c["id"]: c for c in guide.chunks}
+        sections = [by_chunk[s["id"]]["no"] for s in result.get("sections") or [] if s["id"] in by_chunk]
     elif method in ("bm25", "bm25_words"):
         result = guide.search(question)
         passages = result["passages"]
+        if method == "bm25":
+            sections = bm25_sections(guide, question)
     elif method == "rag":
         result = guide.search(question, api_key=key)
         usage = result["usage"]
@@ -150,7 +179,7 @@ def run_method(guide, method, question, key):
     else:
         raise ValueError(method)
     elapsed = time.perf_counter() - started
-    return numbers(guide, [m["id"] for m in result["matches"]]), usage, elapsed, passages, note
+    return numbers(guide, [m["id"] for m in result["matches"]]), usage, elapsed, passages, note, sections
 
 
 def main():
@@ -186,6 +215,7 @@ def main():
     summary = {}
     for method in methods:
         hits, rr, tokens, times, errors, places, calls, statuses = [], [], [], [], 0, [], [], {}
+        sec_hits, sec_good, sec_shown = [], 0, 0
         for item in questions:
             question = item["q"]
             if method.endswith("_words"):
@@ -193,11 +223,16 @@ def main():
                     print(f"[{method}] keywords がないので質問文のまま探す: {question}")
                 question = item.get("keywords") or question
             try:
-                got, usage, elapsed, passages, note = run_method(guide, method, question, key)
+                got, usage, elapsed, passages, note, sections = run_method(guide, method, question, key)
             except GeminiError as error:
                 print(f"[{method}] error: {error}")
                 errors += 1
-                got, usage, elapsed, passages, note = [], None, 0.0, None, None
+                got, usage, elapsed, passages, note, sections = [], None, 0.0, None, None, None
+            if sections is not None and expected_items(guide, item):
+                one, good, shown = section_hit(expected_items(guide, item), sections)
+                sec_hits.append(one)
+                sec_good += good
+                sec_shown += shown
             if note:
                 statuses[note] = statuses.get(note, 0) + 1
             place = item_hit(item["items"], passages) if passages is not None and item.get("items") else None
@@ -222,6 +257,7 @@ def main():
                     "rank": rank,
                     "items": item.get("items"),
                     "passages": [p["no"] for p in (passages or [])[:PASSAGES]],
+                    "sections": sections,
                     "place": place,
                     "calls": (usage or {}).get("calls"),
                     "steps": (usage or {}).get("steps"),
@@ -246,6 +282,15 @@ def main():
             "time": statistics.median(times),
             "errors": errors,
             "place": sum(places) / len(places) if places else None,
+            "sections": (
+                {
+                    "hit": sum(sec_hits) / len(sec_hits),
+                    "precision": sec_good / sec_shown if sec_shown else 0.0,
+                    "shown": sec_shown / len(sec_hits),
+                }
+                if sec_hits
+                else None
+            ),
         }
 
     tag = "_".join(x for x in (args.source, args.out) if x)
@@ -298,6 +343,20 @@ def main():
         lines.append(
             f"| {names[method]}{err} | {row['recall']:.0%} | {row['mrr']:.2f} | {place} | {call} | {tokens} | {tokens_max} | {row['time']:.1f} 秒 |"
         )
+    sec_rows = [(m, r["sections"]) for m, r in summary.items() if r.get("sections")]
+    if sec_rows:
+        lines += [
+            "",
+            "### 記載箇所（章ごとに出す項）",
+            "",
+            "命中 = 出した項のどれかが正解の項（questions の items。無ければ正解の図表の項）に入った割合。正確さ = 出した項のうち正解の項だった割合。"
+            "本文BM25 は「章ごとに一番上の項を全部出したら」の比べ用。",
+            "",
+            "| 方式 | 命中 | 正確さ | 1問あたりの件数 |",
+            "|---|---|---|---|",
+        ]
+        for method, sec in sec_rows:
+            lines.append(f"| {names[method]} | {sec['hit']:.0%} | {sec['precision']:.0%} | {sec['shown']:.1f} |")
     for method, row in summary.items():
         if row["statuses"]:
             order = ["ok", "clarify", "retry", "standards", "number", "図表番号", "単語", "文章のため自動", "0件のため自動"]

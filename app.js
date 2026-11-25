@@ -12,6 +12,8 @@ const state = {
   passages: null,
   clarify: null, // AI が確認を求めたとき { question, options }
   pending: null, // 確認中に1回目で選んでいた図表（「このまま検索」で出す）
+  sections: null, // AI が章ごとに選んだ記載箇所 [{ ch, chapter, passage, reason }]。null なら出さない
+  pendingSections: null, // 確認中に1回目で選んでいた記載箇所
   retried: "", // 言い換えて探し直した検索語
   standards: null, // 基準値アプリへの案内 { substance, medium }
   agentNote: "",
@@ -41,6 +43,7 @@ const publicAi = "https://guideline-figure-search.kogama089.workers.dev";
 const localAi = location.hostname === "localhost" || location.hostname === "127.0.0.1";
 const aiOn = localAi || Boolean(publicAi);
 const STANDARDS_URL = "https://akii-ai.github.io/standards-web/";
+const SECTION_QUOTE = 200; // 記載箇所に出す本文の抜粋（字）
 // 試験評価の記録（端末には残さない。公開サイトでは中継を通して担当者の Notion に保存する）
 const NOTION_LOG = location.origin === "https://akii-ai.github.io" ? `${publicAi}/log` : "";
 const remoteLog = new Map(); // 記録の id → 送信の順番待ち（中身は Notion の行の handle）
@@ -332,6 +335,8 @@ function cancelSearch() {
 function resetAgent() {
   state.clarify = null;
   state.pending = null;
+  state.sections = null;
+  state.pendingSections = null;
   state.retried = "";
   state.standards = null;
   state.agentNote = "";
@@ -434,6 +439,17 @@ async function search(options = {}) {
       })
       .filter(Boolean);
   };
+  // 記載箇所：AI が選んだチャンク id を、手元の本文から引き直す（抜粋は本文をそのまま切り出す）
+  const toSections = (picked) =>
+    (picked || [])
+      .map((item) => {
+        const chunk = guide.chunkById.get(item.id);
+        if (!chunk) return null;
+        const ch = String(chunk.no || "").split(".")[0];
+        return { ch, chapter: chunk.path[0], passage: guide.passage(chunk, query, SECTION_QUOTE), reason: item.reason || "" };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.ch.localeCompare(b.ch));
   const ask = async (request, attempt, extra) => {
     const payload = {
       query,
@@ -441,6 +457,7 @@ async function search(options = {}) {
       chapter: state.chapter,
       passages: request.passages,
       candidates: request.candidates,
+      sections: request.sections,
       attempt,
       sid: options.sid,
       ...extra,
@@ -463,6 +480,7 @@ async function search(options = {}) {
     return data;
   };
   let firstHits = null;
+  let firstSections = null;
   let aiFailed = false;
   try {
     // 2) 1回目：図表選びと次の一手（ok / clarify / retry / standards）を同時に答えさせる
@@ -471,9 +489,11 @@ async function search(options = {}) {
     const next = first.next || { status: "ok" };
     flow.push(next.status);
     firstHits = toHits(first.matches);
+    firstSections = toSections(first.sections);
     if (next.status === "clarify" && next.clarify) {
       state.clarify = next.clarify;
       state.pending = firstHits;
+      state.pendingSections = firstSections;
       state.hits = null;
     } else if (next.status === "retry" && next.retry_query) {
       // 3) 言い換えて、ブラウザで探し直す（AI なし）。2回目は ok に固定され、それ以上は探さない
@@ -485,21 +505,25 @@ async function search(options = {}) {
       if (seq !== searchSeq) return;
       flow.push((second.next || { status: "ok" }).status);
       const secondHits = toHits(second.matches);
+      const secondSections = toSections(second.sections);
       if (secondHits.length) {
         state.hits = secondHits;
         state.passages = retryReq.hits.slice(0, 3).map(([, chunk]) => guide.passage(chunk, query));
       } else {
         state.hits = firstHits;
       }
+      state.sections = secondSections.length ? secondSections : firstSections;
     } else {
       if (next.status === "standards") state.standards = next.standards || { substance: "", medium: "" };
       state.hits = firstHits;
+      state.sections = firstSections;
     }
   } catch (error) {
     if (error.name === "AbortError" || seq !== searchSeq) return;
     // 2回目だけ失敗したときは、1回目の結果を出す。
     // 1回目から失敗したら、右の列に知らせだけ出す（比べられないので、どちらがよかったかは聞かない）
     state.hits = firstHits;
+    state.sections = firstHits ? firstSections : null;
     aiFailed = !firstHits;
     const message = error.message === "Failed to fetch" ? "Gemini に接続できませんでした。" : (error.message || "検索に失敗しました。");
     state.error = firstHits ? `${message} 1回目の結果を表示しています。` : `${message} AI の結果は出せませんでした。左の本文検索の結果をご覧ください。`;
@@ -524,6 +548,7 @@ async function search(options = {}) {
         thoughts: usage.thoughts,
         model: [...usage.models].join(" "),
         shown: state.hits || [],
+        sections: state.sections,
         seconds: elapsed(),
       }));
       render();
@@ -630,9 +655,11 @@ function answerClarify(option) {
 // 「このまま検索」：1回目に選んだ図表をそのまま出す（AI は呼ばない）
 function skipClarify() {
   state.hits = state.pending || [];
+  state.sections = state.pendingSections || [];
   state.clarify = null;
   state.pending = null;
-  updateRecord({ flow: "clarify → このまま検索", shown: shownNumbers(state.hits) });
+  state.pendingSections = null;
+  updateRecord({ flow: "clarify → このまま検索", shown: shownNumbers(state.hits), sections: sectionNumbers(state.sections) });
   render();
 }
 
@@ -714,12 +741,17 @@ function shownNumbers(rows) {
   return (rows || []).filter(passesFilter).slice(0, 5).map((row) => row.number || "").filter(Boolean).join(" ");
 }
 
+// 表示した記載箇所の項番号（章の順。例：2.8／5.9.4）
+function sectionNumbers(sections) {
+  return (sections || []).map((s) => s.passage.no).filter(Boolean).join("／");
+}
+
 function remember(record) {
   state.record = record;
 }
 
 // compare：比べる画面の左（本文BM25）の結果。渡したら「比較」（どちらがよかったか）を聞く行にする
-function addRecord({ sid, send = true, rateable = send, compare = null, query, mode, engine, reason, parent, flow, calls = 0, prompt = 0, output = 0, thoughts = 0, model = "", shown, seconds }) {
+function addRecord({ sid, send = true, rateable = send, compare = null, query, mode, engine, reason, parent, flow, calls = 0, prompt = 0, output = 0, thoughts = 0, model = "", shown, sections = null, seconds }) {
   const record = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     time: localTime(new Date()),
@@ -746,6 +778,7 @@ function addRecord({ sid, send = true, rateable = send, compare = null, query, m
   if (compare) {
     record.compare = "未回答";
     record.bm25 = shownNumbers(compare);
+    record.sections = sectionNumbers(sections);
   }
   if (send) sendRecord(record);
   // 保存を止めた検索・AI が答えられなかった比較には、評価を求めない
@@ -994,7 +1027,7 @@ function renderCompare(tokens) {
     ? cardsHtml(left, "bm25", rightSet, tokens)
     : `<p class="col-wait">本文から合う図表は見つかりませんでした。</p>`;
 
-  resultsEl.innerHTML = `${passagesHtml(tokens, true)}
+  resultsEl.innerHTML = `${sectionsHtml(tokens)}${passagesHtml(tokens, true)}
     <div class="compare-tabs" role="tablist" aria-label="結果の切り替え">${tab("bm25", "本文検索", `${left.length}件`)}${tab("ai", "AI検索", rightCount)}</div>
     <div class="compare" data-show="${state.compareTab}">
       <section class="col col-bm25" aria-label="本文検索（AIなし）">
@@ -1040,6 +1073,32 @@ function showCompareTab(side) {
   for (const button of resultsEl.querySelectorAll("button[data-tab]")) {
     button.setAttribute("aria-selected", String(button.dataset.tab === state.compareTab));
   }
+}
+
+// ガイドラインの記載箇所（AI が章ごとに選ぶ）。比べる画面の2列の上に出す。
+// 抜粋は本文をそのまま切り出したもの。AI が書くのは「理由」の一文だけ
+function sectionsHtml(tokens) {
+  const head = `<h2><span>ガイドラインの記載箇所</span><span class="sections-sub">AI が章ごとに選択</span></h2>`;
+  if (state.loading) {
+    return `<section class="sections" aria-label="ガイドラインの記載箇所">${head}<p class="sections-wait">AI が記載箇所を選んでいます…</p></section>`;
+  }
+  if (!state.sections) return "";
+  if (!state.sections.length) {
+    return `<section class="sections" aria-label="ガイドラインの記載箇所">${head}<p class="sections-wait">当てはまる記載箇所を選べませんでした。下の「本文の該当箇所」もご覧ください。</p></section>`;
+  }
+  const items = state.sections
+    .map(({ ch, chapter, passage, reason }) => {
+      const where = whereLabel(passage);
+      return `<li class="section">
+        <div class="section-ch">第${escapeHtml(ch)}章 ${escapeHtml(chapter)}</div>
+        <div class="section-where">${escapeHtml(where)}</div>
+        <p class="section-quote">${highlight(`${passage.quote}…`, tokens)}</p>
+        ${reason ? `<p class="section-reason">${escapeHtml(reason)}</p>` : ""}
+        <div class="card-actions"><button type="button" data-copy="${escapeHtml(`ガイドライン ${where}`)}">引用をコピー</button></div>
+      </li>`;
+    })
+    .join("");
+  return `<section class="sections" aria-label="ガイドラインの記載箇所">${head}<ol>${items}</ol></section>`;
 }
 
 function passagesHtml(tokens, collapsed = false) {

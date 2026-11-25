@@ -277,9 +277,10 @@ class Handler(BaseHTTPRequestHandler):
                 attempt = 2 if payload.get("attempt") == 2 else 1
                 allow = attempt == 1 and payload.get("allowClarify") is not False
                 previous = payload.get("previous") if isinstance(payload.get("previous"), list) else []
-                req = {"passages": payload["passages"], "candidates": payload.get("candidates")}
+                req = {"passages": payload["passages"], "candidates": payload.get("candidates"), "sections": payload.get("sections")}
                 found, usage = AGENT.ask(query, req, attempt, api_key, allow, previous[:10])
-                result = {"matches": found.pop("matches"), "next": found, "usage": usage}
+                matches, sections = found.pop("matches"), found.pop("sections", [])
+                result = {"matches": matches, "sections": sections, "next": found, "usage": usage}
             elif isinstance(payload.get("passages"), list):
                 # ブラウザ（rag.js）が本文を探し済み。公開サイトの中継（proxy/worker.js）と同じ受け方
                 result = GUIDE.answer(query, payload["passages"], payload.get("candidates"), api_key)

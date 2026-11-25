@@ -23,7 +23,18 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from tools.keyword_search import keyword_search  # noqa: E402
-from tools.rag import MATCH_SCHEMA, base_number, build_prompt, call_gemini, clean_request, page_id  # noqa: E402
+from tools.rag import (  # noqa: E402
+    MATCH_SCHEMA,
+    SECTIONS_SCHEMA,
+    base_number,
+    build_prompt,
+    call_gemini,
+    clean_request,
+    clean_sections,
+    page_id,
+    pick_sections,
+    sections_prompt,
+)
 
 STATUSES = ("ok", "clarify", "retry", "standards")
 STANDARDS_URL = "https://akii-ai.github.io/standards-web/"
@@ -58,10 +69,18 @@ AGENT_SCHEMA = {
         "retry_query": {"type": "STRING", "description": "検索語。60字まで"},
         "substance": {"type": "STRING", "description": "物質名"},
         "medium": {"type": "STRING", "description": "土壌／地下水など"},
+        "sections": SECTIONS_SCHEMA,
     },
     "required": ["status", "matches"],
-    "propertyOrdering": ["status", "clarify_question", "clarify_options", "retry_query", "substance", "medium", "matches"],
+    "propertyOrdering": ["status", "clarify_question", "clarify_options", "retry_query", "substance", "medium", "matches", "sections"],
 }
+# 2回目：図表と記載箇所だけ（次の一手は聞かない）
+RETRY_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {"matches": MATCH_SCHEMA["properties"]["matches"], "sections": SECTIONS_SCHEMA},
+    "required": ["matches"],
+}
+MAX_TOKENS = 1536  # 思考の token も含む。記載箇所の分だけ 1024 から増やした
 
 
 def has_figure_number(query):
@@ -102,8 +121,8 @@ def clean_next(parsed, attempt, allow_clarify=True):
     return out
 
 
-def agent_prompt(query, passages, rows, attempt, allow_clarify, previous):
-    base = build_prompt(query, passages, rows)
+def agent_prompt(query, passages, rows, attempt, allow_clarify, previous, sections=()):
+    base = build_prompt(query, passages, rows) + sections_prompt(sections)
     if attempt >= 2:
         prev = "、".join(previous) if previous else "なし"
         return (
@@ -139,15 +158,16 @@ class AgentLite:
     def ask(self, query, req, attempt, api_key, allow_clarify=True, previous=()):
         """Gemini を1回呼ぶ。worker.js が受け取って確かめるのと同じ内容。"""
         passages, rows = clean_request(req["passages"], req["candidates"], self.guide.by_id)
+        sections = clean_sections(req.get("sections"))
         # 2回目に渡す「1回目の図表番号」は figures.json にある番号だけ
         previous = self.clean_previous(list(previous or []))
         if not rows:
-            return {"matches": [], "status": "ok"}, None
+            return {"matches": [], "sections": [], "status": "ok"}, None
         attempt = 2 if attempt == 2 else 1
         allow_clarify = attempt == 1 and allow_clarify
-        schema = AGENT_SCHEMA if attempt == 1 else MATCH_SCHEMA
-        prompt = agent_prompt(query, passages, rows, attempt, allow_clarify, [n for _, n in previous])
-        parsed, usage = call_gemini(prompt, schema, api_key)
+        schema = AGENT_SCHEMA if attempt == 1 else RETRY_SCHEMA
+        prompt = agent_prompt(query, passages, rows, attempt, allow_clarify, [n for _, n in previous], sections)
+        parsed, usage = call_gemini(prompt, schema, api_key, MAX_TOKENS)
         allowed = {r["id"] for r in rows} | {i for i, _ in previous}
         chunk_of = {r["id"]: r["chunk"] for r in rows}
         known = {p["id"] for p in passages} | set(chunk_of.values())
@@ -168,6 +188,7 @@ class AgentLite:
                 break
         result = clean_next(parsed, attempt, allow_clarify)
         result["matches"] = matches
+        result["sections"] = pick_sections(parsed, sections)
         return result, usage
 
     def search(self, query, api_key, allow_clarify=True):
@@ -185,7 +206,7 @@ class AgentLite:
             rows = keyword_search(self.guide.figures, query)
             total["steps"].append("number")
             matches = [{"id": page_id(r["url"]), "reason": "", "chunk": ""} for r in rows[:8]]
-            return {"matches": matches, "passages": [], "usage": total, "next": {"status": "number"}}
+            return {"matches": matches, "sections": [], "passages": [], "usage": total, "next": {"status": "number"}}
 
         req = self.guide.request(query)
         first, usage = self.ask(query, req, 1, api_key, allow_clarify)
@@ -203,10 +224,12 @@ class AgentLite:
             if second["matches"]:
                 final = {**second, "retry_query": first["retry_query"]}
                 passages = retry_req["passages"]
+            if second["sections"]:
+                final = {**final, "sections": second["sections"]}
         if not total["prompt"]:
             total["prompt"] = None
-        nxt = {k: v for k, v in first.items() if k != "matches"}
-        return {"matches": final["matches"], "passages": passages, "usage": total, "next": nxt}
+        nxt = {k: v for k, v in first.items() if k not in ("matches", "sections")}
+        return {"matches": final["matches"], "sections": final["sections"], "passages": passages, "usage": total, "next": nxt}
 
 
 if __name__ == "__main__":

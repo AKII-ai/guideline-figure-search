@@ -5,12 +5,18 @@
 // 2. 本文チャンクを 2文字区切りの BM25 で探す
 // 3. 上位チャンクが触れている図表・同じ項の図表・図表名に当たる図表を候補にする
 // 4. 中継（または local server）に「質問＋上位チャンクの抜粋＋候補の図表 id」だけを送り、Gemini に選ばせる
+// 5. 記載箇所：章（1〜6）ごとの候補もあわせて送り、当てはまる章の項を Gemini に選ばせる（呼び出しは増やさない）
 
 (function (root) {
   const TOP_CHUNKS = 12;
   const PROMPT_CHUNKS = 6;
   const EXCERPT = 220;
   const CANDIDATES = 20;
+  // 記載箇所の候補：上位 SECTION_DEPTH チャンクから、章（1〜6）ごとに項の違うものを SECTION_PER_CHAPTER 件まで
+  const SECTION_DEPTH = 60;
+  const SECTION_PER_CHAPTER = 3;
+  const SECTION_QUOTE = 120;
+  const CHAPTERS = ["1", "2", "3", "4", "5", "6"];
   const K1 = 1.2;
   const B = 0.75;
 
@@ -232,9 +238,30 @@
       };
     }
 
+    // 記載箇所の候補（章ごと）。どの章が当てはまるか・どの項かは AI が選ぶ。付録は入れない
+    sectionCandidates(query, deep) {
+      const byChapter = new Map(CHAPTERS.map((ch) => [ch, []]));
+      for (const [, chunk] of deep) {
+        const list = byChapter.get(String(chunk.no || "").split(".")[0]);
+        if (!list || list.length >= SECTION_PER_CHAPTER || list.some((c) => c.no === chunk.no)) continue;
+        list.push(chunk);
+      }
+      return CHAPTERS.flatMap((ch) =>
+        byChapter.get(ch).map((chunk) => ({
+          id: chunk.id,
+          ch,
+          no: chunk.no,
+          title: chunk.path.slice(-2).join(" › "),
+          page: chunk.page,
+          quote: this.quote(chunk, query, SECTION_QUOTE),
+        }))
+      );
+    }
+
     // 中継に送る内容（本文の抜粋と候補の id だけ）
     request(query, kind = "", chapter = "") {
-      const hits = this.searchChunks(query);
+      const deep = this.searchChunks(query, SECTION_DEPTH);
+      const hits = deep.slice(0, TOP_CHUNKS);
       const ranked = this.rankFigures(query, kind, chapter, hits);
       const passages = hits.slice(0, PROMPT_CHUNKS).map(([, chunk]) => ({
         id: chunk.id,
@@ -247,7 +274,7 @@
         id: pageId(row.url),
         chunk: chunk ? chunk.id : "",
       }));
-      return { hits, ranked, passages, candidates };
+      return { hits, ranked, passages, candidates, sections: this.sectionCandidates(query, deep) };
     }
   }
 

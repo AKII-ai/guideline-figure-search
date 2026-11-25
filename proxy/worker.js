@@ -76,19 +76,21 @@ export default {
         if (payload.attempt != null) {
           // 軽量エージェント：図表選びと次の一手（ok/clarify/retry/standards）を1回で答えさせる
           if (!rows.length) {
-            return withCors(json({ matches: [], next: { status: "ok" } }), origin);
+            return withCors(json({ matches: [], sections: [], next: { status: "ok" } }), origin);
           }
           const attempt = Number(payload.attempt) === 2 ? 2 : 1;
           const allowClarify = attempt === 1 && payload.allowClarify !== false;
           const previous = cleanPrevious(payload.previous, figures);
-          const prompt = buildAgentPrompt(query, passages, rows, attempt, allowClarify, previous.map((p) => p.number));
-          const schema = attempt === 1 ? AGENT_SCHEMA : MATCH_SCHEMA;
+          const sections = cleanSections(payload.sections);
+          const prompt = buildAgentPrompt(query, passages, rows, attempt, allowClarify, previous.map((p) => p.number), sections);
+          const schema = attempt === 1 ? AGENT_SCHEMA : RETRY_SCHEMA;
           const stopped = await checkLimit(request, env, attempt === 1 ? "ai1" : "ai2", payload.sid);
           if (stopped) return withCors(stopped, origin);
-          const { text, usage } = await callGemini(prompt, schema, apiKey, 1024);
+          const { text, usage } = await callGemini(prompt, schema, apiKey, AGENT_MAX_TOKENS);
           const parsed = parseJson(text);
           const matches = pickRagMatches(parsed, rows, passages, previous);
-          return withCors(json({ matches, next: cleanNext(parsed, attempt, allowClarify), usage }), origin);
+          const picked = pickSections(parsed, sections);
+          return withCors(json({ matches, sections: picked, next: cleanNext(parsed, attempt, allowClarify), usage }), origin);
         }
         if (!rows.length) {
           return withCors(json({ matches: [] }), origin);
@@ -449,6 +451,79 @@ function baseNumber(value) {
   return normNum(value).replace(/[（(][^）)]*[）)]$/, "");
 }
 
+// ---------- 記載箇所（章ごと。tools/rag.py の clean_sections / sections_prompt / pick_sections と同じ） ----------
+const CHAPTERS = ["1", "2", "3", "4", "5", "6"];
+const CHAPTER_NAMES = {
+  1: "土壌汚染対策法の概要",
+  2: "土壌汚染状況調査",
+  3: "要措置区域等の指定",
+  4: "指定の申請",
+  5: "汚染の除去等の措置",
+  6: "臨海部特例区域",
+};
+const SECTIONS_MAX = 18; // 1章3件まで
+const SECTION_REASON_MAX = 40;
+const SECTIONS_SCHEMA = {
+  type: "ARRAY",
+  maxItems: CHAPTERS.length,
+  items: {
+    type: "OBJECT",
+    properties: { id: { type: "STRING" }, reason: { type: "STRING" } },
+    required: ["id", "reason"],
+  },
+};
+
+// ブラウザから来た記載箇所の候補を確かめる。数と長さを制限する
+function cleanSections(raw) {
+  const out = [];
+  for (const item of (Array.isArray(raw) ? raw : []).slice(0, SECTIONS_MAX)) {
+    if (!item || typeof item !== "object") continue;
+    const id = String(item.id || "");
+    const ch = String(item.ch || "");
+    if (!CHUNK_ID.test(id) || !CHAPTERS.includes(ch) || out.some((s) => s.id === id)) continue;
+    out.push({
+      id,
+      ch,
+      no: String(item.no || "").slice(0, 20),
+      title: String(item.title || "").slice(0, 80),
+      page: String(item.page || "").slice(0, 24),
+      quote: String(item.quote || "").slice(0, 160),
+    });
+  }
+  return out;
+}
+
+function sectionsPrompt(sections) {
+  if (!sections.length) return "";
+  const lines = [];
+  for (const ch of CHAPTERS) {
+    const items = sections.filter((s) => s.ch === ch);
+    if (!items.length) continue;
+    lines.push(`第${ch}章 ${CHAPTER_NAMES[ch]}`);
+    for (const s of items) lines.push(`[${s.id}] ${s.no} ${s.title} ${s.page ? `p.${s.page}` : ""}\n${s.quote}`);
+  }
+  return (
+    "\n\n記載箇所の候補（章ごと。[チャンクid] 項番号 見出し ページ）:\n" +
+    lines.join("\n") +
+    "\n\nsections には、質問の答えが書いてある箇所を章ごとに1件まで選ぶ。" +
+    "質問に当てはまらない章は入れない（全部の章を埋めなくてよい）。" +
+    "id は記載箇所の候補のチャンクid。reason は日本語で40字まで（その箇所に何が書いてあるか）。"
+  );
+}
+
+// AI が選んだ記載箇所。送った候補の id だけ通し、1章1件、章の順に並べる（任意の文章は理由の40字だけ）
+function pickSections(parsed, sections) {
+  const byId = new Map(sections.map((s) => [s.id, s]));
+  const out = [];
+  for (const item of Array.isArray(parsed.sections) ? parsed.sections : []) {
+    if (!item || typeof item !== "object") continue;
+    const s = byId.get(String(item.id || "").trim());
+    if (!s || out.some((o) => byId.get(o.id).ch === s.ch)) continue;
+    out.push({ id: s.id, reason: clip(item.reason, SECTION_REASON_MAX) });
+  }
+  return out.sort((a, b) => byId.get(a.id).ch.localeCompare(byId.get(b.id).ch));
+}
+
 // ---------- 軽量エージェント（tools/agent_lite.py と同じ） ----------
 const STATUSES = ["ok", "clarify", "retry", "standards"];
 const RETRY_QUERY_MAX = 60;
@@ -468,10 +543,18 @@ const AGENT_SCHEMA = {
     retry_query: { type: "STRING", description: "検索語。60字まで" },
     substance: { type: "STRING", description: "物質名" },
     medium: { type: "STRING", description: "土壌／地下水など" },
+    sections: SECTIONS_SCHEMA,
   },
   required: ["status", "matches"],
-  propertyOrdering: ["status", "clarify_question", "clarify_options", "retry_query", "substance", "medium", "matches"],
+  propertyOrdering: ["status", "clarify_question", "clarify_options", "retry_query", "substance", "medium", "matches", "sections"],
 };
+// 2回目：図表と記載箇所だけ（次の一手は聞かない）
+const RETRY_SCHEMA = {
+  type: "OBJECT",
+  properties: { matches: MATCH_SCHEMA.properties.matches, sections: SECTIONS_SCHEMA },
+  required: ["matches"],
+};
+const AGENT_MAX_TOKENS = 1536; // 思考の token も含む。記載箇所の分だけ 1024 から増やした
 
 const CLARIFY_RULE =
   "- clarify: 質問の意味が2通り以上に取れ、それぞれ別の項に行き着くときだけ。" +
@@ -488,8 +571,8 @@ function statusRules(allowClarify) {
   );
 }
 
-function buildAgentPrompt(query, passages, rows, attempt, allowClarify, previous) {
-  const base = buildPrompt(query, passages, rows);
+function buildAgentPrompt(query, passages, rows, attempt, allowClarify, previous, sections = []) {
+  const base = buildPrompt(query, passages, rows) + sectionsPrompt(sections);
   if (attempt >= 2) {
     // 2回目には1回目の結果を図表番号だけで渡す（抜粋や理由は渡さない）
     return (
@@ -626,7 +709,7 @@ async function checkLimit(request, env, kind, rawId) {
 }
 
 // ---------- 試験評価の記録を Notion に保存する ----------
-// 受けるのは2つだけ：{ record }（1行足す）と { handle, patch }（その行の4列だけ直す）。読み出しの口は作らない。
+// 受けるのは2つだけ：{ record }（1行足す）と { handle, patch }（その行の LOG_EDITABLE の列だけ直す）。読み出しの口は作らない。
 // handle は中継が署名したページ ID。ほかの人の行や、ほかのページは直せない。
 const LOG_ORIGIN = "https://akii-ai.github.io"; // 手元のテストの検索は保存しない
 const LOG_BODY_MAX = 6000;
@@ -642,6 +725,7 @@ const LOG_TEXTS = [
   ["shown", "表示した図表番号（上位5件）", 200],
   ["bm25", "本文BM25の図表番号（上位5件）", 200],
   ["opened", "Notionで開いた図表番号", 400],
+  ["sections", "記載箇所", 100],
 ];
 // [記録の項目, Notion の列, 値の上限]
 const LOG_NUMBERS = [
@@ -658,7 +742,7 @@ const LOG_FEEDBACK = ["未評価", "役立った", "違った", "よくわから
 const LOG_EXPERIENCE = ["3年未満", "3〜10年", "10年以上"];
 // 比較（AI検索ボタン：本文BM25 と AI を左右に並べる）で、どちらがよかったか
 const LOG_COMPARE = ["未回答", "本文検索", "同じくらい", "AI検索", "どちらもだめ"];
-const LOG_EDITABLE = ["flow", "shown", "opened", "feedback", "compare"];
+const LOG_EDITABLE = ["flow", "shown", "opened", "feedback", "compare", "sections"];
 const LOG_QUESTION_MAX = 300;
 
 function logProperties(raw) {
